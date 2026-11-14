@@ -264,3 +264,74 @@ test('migration 4 hashes keys stored in plaintext by migration 3', () => {
     db.close();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
+
+test('revoking link X ends X\'s cookie; link Y on the same space stays live', async (x) => {
+  const { t, admin, link } = await world(x);
+  const lx = await link('alpha'), ly = await link('alpha');
+  const vx = client(t.base), vy = client(t.base);
+  await vx.fetch(path(lx.url));
+  await vy.fetch(path(ly.url));
+  assert.equal((await admin.post(`/api/spaces/alpha/links/${lx.id}/revoke`, {})).status, 200);
+  assert.equal((await vx.fetch('/s/alpha/a.css')).status, 401);
+  assert.equal((await vy.fetch('/s/alpha/a.css')).status, 200);
+});
+
+test('parallel opens of a one-use link spend it once', async (x) => {
+  const { t, link } = await world(x);
+  const l = await link('alpha', { max_uses: 1 });
+  const codes = await Promise.all(Array.from({ length: 8 }, () => client(t.base).fetch(path(l.url), { method: 'POST' }).then((r) => r.status)));
+  assert.deepEqual(codes.sort(), [303, 410, 410, 410, 410, 410, 410, 410]);
+  assert.equal(t.db.prepare('SELECT uses_count FROM grants WHERE id = ?').get(l.id).uses_count, 1);
+});
+
+test('REST link routes refuse an agent token without share; with share it can create but not resume', async (x) => {
+  const { t, admin, link } = await world(x);
+  const token = async (perms) => (await (await admin.post('/api/tokens', { name: 'bot', spaces: ['alpha'], perms })).json()).token;
+  const as = (tok, p, method = 'GET') => fetch(t.base + p, { method, headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json' }, body: method === 'GET' ? undefined : '{}' });
+  for (const perms of [['read'], ['read', 'publish']]) {
+    const tok = await token(perms);
+    assert.equal((await as(tok, '/api/spaces/alpha/links')).status, 403, perms.join());
+    assert.equal((await as(tok, '/api/spaces/alpha/links', 'POST')).status, 403, perms.join());
+  }
+  const sharer = await token(['read', 'share']);
+  assert.equal((await as(sharer, '/api/spaces/alpha/links', 'POST')).status, 201);
+  const l = await link('alpha');
+  assert.equal((await as(sharer, `/api/spaces/alpha/links/${l.id}/resume`, 'POST')).status, 403, 'resuming paused links is a person\'s call');
+});
+
+test('branding values cannot inject markup into the 404 and 410 pages', async (x) => {
+  const { t } = await world(x);
+  // Written straight to the table, past setBranding's validation.
+  const up = t.db.prepare('INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+  up.run('brand_name', '<script>alert(1)</script>');
+  up.run('brand_logo', '"><script>alert(2)</script>');
+  up.run('brand_accent', 'red;}</style><script>alert(3)</script>');
+  for (const p of ['/s/nope/', '/s/alpha/?key=sfl_x']) {
+    const h = await (await client(t.base).fetch(p)).text();
+    assert.doesNotMatch(h, /<script/i, p);
+    assert.match(h, /&lt;script&gt;alert\(1\)/);
+  }
+});
+
+test('a team viewer cookie stops working after logout or when the member is disabled', async (x) => {
+  const { t, admin } = await world(x);
+  const viewerOf = async (c) => {
+    assert.equal((await c.fetch('/s/beta/', { headers: DOC })).status, 200);
+    const [k, v] = [...c.jar].find(([n]) => n.startsWith('fsv_'));
+    return () => fetch(`${t.base}/s/beta/a.css`, { headers: { cookie: `${k}=${v}` } }).then((r) => r.status);
+  };
+  const adaView = await viewerOf(admin);
+  assert.equal(await adaView(), 200);
+  assert.equal((await admin.post('/api/logout', {})).status, 200);
+  assert.equal(await adaView(), 401, 'logout ends it');
+
+  const ada = await (async () => { const c = client(t.base); await c.json('/api/login', { email: 'ada@example.com', password: 'correct horse battery' }); c.csrf = t.db.prepare('SELECT csrf_token FROM sessions WHERE revoked_at IS NULL').get().csrf_token; return c; })();
+  const inv = (await (await ada.json('/api/invites', {}, 'POST', { 'x-csrf-token': ada.csrf })).json()).invite;
+  const bob = client(t.base);
+  assert.equal((await bob.json('/api/invites/accept', { token: inv.split('/').pop(), name: 'Bob', email: 'bob@example.com', password: 'correct horse battery' })).status, 201);
+  const bobView = await viewerOf(bob);
+  assert.equal(await bobView(), 200);
+  const bobId = t.db.prepare("SELECT id FROM users WHERE username = 'bob@example.com'").get().id;
+  assert.equal((await ada.json(`/api/users/${bobId}/disable`, {}, 'POST', { 'x-csrf-token': ada.csrf })).status, 200);
+  assert.equal(await bobView(), 401, 'disabling the member ends it');
+});
