@@ -127,13 +127,15 @@ export class OAuth {
         if (row.grant_id) this.auth.revokeKey(row.grant_id);
         throw oauthErr(400, 'invalid_grant', 'Code already used');
       }
-      this.db.prepare('UPDATE oauth_codes SET used_at = ? WHERE code_hash = ?').run(now(), row.code_hash);
       if (row.expires_at < now()) throw oauthErr(400, 'invalid_grant', 'Code expired');
       if (row.client_id !== p.client_id || row.redirect_uri !== p.redirect_uri) throw oauthErr(400, 'invalid_grant', 'client_id or redirect_uri mismatch');
       const verifier = String(p.code_verifier || '');
       if (!/^[\w.~-]{43,128}$/.test(verifier) || !safeEqual(crypto.createHash('sha256').update(verifier).digest('base64url'), row.code_challenge)) {
         throw oauthErr(400, 'invalid_grant', 'PKCE verification failed');
       }
+      // Spend the code only once the caller has proved it is the client: someone holding a stolen code
+      // but not the verifier can't burn it for the real client.
+      this.db.prepare('UPDATE oauth_codes SET used_at = ? WHERE code_hash = ?').run(now(), row.code_hash);
       if (!this.auth.activeUser(row.user_id)) throw oauthErr(400, 'invalid_grant', 'The approving member is no longer active');
       // One grant per member+client: a step-up approval replaces the scope of the existing grant.
       const existing = this.db.prepare("SELECT id FROM api_keys WHERE kind = 'oauth' AND user_id = ? AND client_id = ? AND revoked_at IS NULL").get(row.user_id, row.client_id);

@@ -125,9 +125,20 @@ test('PKCE is required and verified; codes are single-use and a replay revokes t
     const code = new URL((await form(ada, '/oauth/authorize', pairs)).headers.get('location')).searchParams.get('code');
     const bad = await form(client(t.base), '/oauth/token', { grant_type: 'authorization_code', code, redirect_uri: REDIRECT, client_id: CLIENT, code_verifier: pkce().verifier });
     assert.equal((await bad.json()).error, 'invalid_grant');
-    // The failed attempt burned the code: the right verifier no longer works either.
-    const late = await form(client(t.base), '/oauth/token', { grant_type: 'authorization_code', code, redirect_uri: REDIRECT, client_id: CLIENT, code_verifier: verifier });
-    assert.equal(late.status, 400);
+    // Wrong client_id or redirect_uri fail too, and none of these burn the code for the real client.
+    for (const p of [{ client_id: 'https://other.example/c.json' }, { redirect_uri: 'https://claude.example/other' }]) {
+      const r = await form(client(t.base), '/oauth/token', { grant_type: 'authorization_code', code, redirect_uri: REDIRECT, client_id: CLIENT, code_verifier: verifier, ...p });
+      assert.equal((await r.json()).error, 'invalid_grant', JSON.stringify(p));
+    }
+    const real = await form(client(t.base), '/oauth/token', { grant_type: 'authorization_code', code, redirect_uri: REDIRECT, client_id: CLIENT, code_verifier: verifier });
+    assert.equal(real.status, 200);
+
+    // An expired code is refused.
+    const { verifier: v2, challenge: c2 } = pkce();
+    const code2 = new URL((await form(ada, '/oauth/authorize', pairs.map(([k, v]) => [k, k === 'code_challenge' ? c2 : v]))).headers.get('location')).searchParams.get('code');
+    t.db.prepare("UPDATE oauth_codes SET expires_at = '2000-01-01T00:00:00.000Z' WHERE used_at IS NULL").run();
+    const expired = await form(client(t.base), '/oauth/token', { grant_type: 'authorization_code', code: code2, redirect_uri: REDIRECT, client_id: CLIENT, code_verifier: v2 });
+    assert.match((await expired.json()).error_description, /expired/);
 
     const ok = await connect(t, ada);
     assert.equal((await mcp(t, ok.access_token, 'ping')).status, 200);
