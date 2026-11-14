@@ -9,7 +9,7 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 - **One file of state**: SQLite (`node:sqlite`) plus a blob directory. No native dependencies, no timers, no background workers.
 - Node 24+, GPL-3.0-or-later.
 
-This release covers milestones M0–M5: the core, OAuth and MCP, client sharing (share links, passwords, expiry, view tracking, branding), portability (export and import), and plugins (an API, a `sqlite` plugin and a `watermark` reference plugin; see [docs/writing-a-plugin.md](docs/writing-a-plugin.md)). Subdomain mode and a publishing CLI are not built yet.
+This release covers milestones M0–M6: the core, OAuth and MCP, client sharing (share links, passwords, expiry, view tracking, branding), portability (export and import), and plugins (an API, a `sqlite` plugin and a `watermark` reference plugin; see [docs/writing-a-plugin.md](docs/writing-a-plugin.md)), and people (SMTP, domain self-signup, offboarding, email re-confirmation). Subdomain mode and a publishing CLI are not built yet.
 
 ## Run it
 
@@ -23,7 +23,7 @@ Open it, create the admin account at `/setup`, then invite your team from the Te
 |---|---|---|
 | `FREESPACE_DATA_DIR` | `./data` | database, blobs, signing secret |
 | `HOST` / `PORT` | `127.0.0.1` / `8080` | |
-| `FREESPACE_PUBLIC_URL` | | used for invite links and as the OAuth issuer; set it in production |
+| `FREESPACE_PUBLIC_URL` | | used for invite and email links and as the OAuth issuer; set it in production |
 | `FREESPACE_TRUST_PROXY` | | `1` behind a proxy that sets `X-Forwarded-For`, so login throttling sees real client IPs |
 | `FREESPACE_MAX_UPLOAD_BYTES` | 200 MB | also `..._MAX_IMPORT_BYTES` (bundle imports, default 3 × space size + 64 MB), `..._MAX_FILE_BYTES`, `..._MAX_SPACE_BYTES`, `..._MAX_TOTAL_BYTES` |
 
@@ -67,11 +67,21 @@ Every way in — dashboard session, OAuth access token, pasted `fsa_` token — 
 - **Authorization code + PKCE (S256 only).** The consent screen shows the client's name and metadata URL, a space picker, a "can create spaces" toggle and a permission picker. Codes live two minutes and work once; replaying one revokes what it issued.
 - **Tokens** are opaque, stored as SHA-256 hashes, and found with one indexed lookup. Access tokens last an hour. Refresh tokens rotate on every use; presenting a spent one revokes the whole grant.
 - **One grant per member and client**, stored as a row in the same table as pasted tokens, so the Access page lists both, grouped by client. Revoking a grant kills its access and refresh tokens at once. Asking for more (`insufficient_scope` → re-consent) widens the same grant.
-- **The granter is live.** Disable a member and every grant and token they approved stops working.
+- **The granter is live.** Deactivate a member (or let their email re-confirmation lapse) and every grant and token they approved stops working.
 - **Scopes:** `space:{slug}`, `spaces:create`, `publish`, `db`, `share`, `export`, `read`. Any other string fails the request. A tool call outside the credential's scope returns `403` with `WWW-Authenticate: Bearer error="insufficient_scope", scope="…"` naming what to ask for.
 - A space an agent creates joins that agent's grant, and only that one.
 
-Anything that escalates privileges needs a person's own signed-in session, never a scoped credential: inviting people, disabling users, minting tokens, approving OAuth grants, instance settings, and making a space public. No MCP tool does any of these.
+Anything that escalates privileges needs a person's own signed-in session, never a scoped credential: inviting people, deactivating users, minting tokens, approving OAuth grants, instance settings, and making a space public. No MCP tool does any of these.
+
+## People
+
+All of this is on the **Instance** and **Team** pages, admins only.
+
+- **Email (SMTP).** Host, port, implicit TLS (465) or STARTTLS (587), username, password and from-address, plus a **Send test email to me** button. The client is built in (`src/mail.js`, no dependencies): plain-text mail, a timeout on every step, and any header value containing CR or LF is refused. Unencrypted SMTP is allowed only to a relay on the same machine. The password is encrypted at rest with a key derived from `secret.key`; it is never shown again, returned by the API or logged. Leave the field blank to keep it.
+- **Self-signup** is off by default and can be turned on only once SMTP works. List the email domains allowed to sign up. Matching is exact and case-insensitive; a subdomain must be listed separately, and international domains are matched in punycode. `/signup` answers "check your inbox" for every well-formed address, so it can't be used to find out who has an account. A new address at a listed domain gets a link valid for 30 minutes that works once. An address that already has an account gets a "you already have an account" email instead. The link creates a **member**, never an admin. Requests are limited per IP and per address and recorded in the activity log. Removing a domain doesn't deactivate anyone who already signed up.
+- **Offboarding.** **Deactivate** on the Team page stops that person's sessions, pasted tokens and OAuth grants immediately (MCP, the API, everything), because every credential is checked against its owner on each request. Nothing they made is deleted. **Reactivate** lets them sign in again, but old sessions stay signed out. The last active admin can't be deactivated.
+- **Email re-confirmation** (optional, needs SMTP). Set *N* days and each person must confirm their address every *N* days. It is checked when they sign in and whenever one of their credentials is used; there are no timers. When it lapses, their credentials stop working. Signing in with the right password emails a confirmation link, and confirming restores access. Turning it on gives everyone a full *N* days. The Team page shows **lapsed** and **deactivated**.
+  If every admin lapses and mail is broken, turn re-confirmation off from the server with `sqlite3 data/control.db "UPDATE meta SET value = json_set(value, '$.reconfirmDays', 0) WHERE key = 'people'"` and restart.
 
 ## Export and import
 
