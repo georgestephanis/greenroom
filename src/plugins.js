@@ -174,12 +174,13 @@ export function createPlugins({ store, config, installed = [] }) {
 
     // ---- bundles (section 8) ----
     /** Add every plugin's files for a space. `add(zipPath, content)`; `history` also asks for history data. */
+    // An installed plugin's own exporter and importer run even while it is switched off, so its data keeps
+    // its layout (snapshot blobs live in the CAS, not in its directory). Only unknown plugins are copied raw.
     async exportInto(space, { add, history }) {
-      const on = active(space);
       for (const n of listed(space)) {
         const s = rawSettings(space, n);
         if (Object.keys(s).length) await add(`plugins/${n}/settings.json`, JSON.stringify(s, null, 2));
-        if (on.includes(n)) {
+        if (defs.has(n)) {
           const p = get(n);
           for (const fn of p.exporters) {
             // Zip entries are written one at a time, so serialise `add` even when a hook forgets to await it.
@@ -189,7 +190,7 @@ export function createPlugins({ store, config, installed = [] }) {
             await q;
           }
         } else {
-          // Not installed here (or switched off): carry its files through untouched.
+          // Not installed here: carry its files through untouched.
           const base = dirOf(space, n);
           for (const rel of await walk(base)) if (history || !rel.startsWith('history/')) await add(`${rel.startsWith('history/') ? 'history/' : ''}plugins/${n}/${rel.replace(/^history\//, '')}`, fs.createReadStream(path.join(base, rel)));
         }
@@ -210,8 +211,9 @@ export function createPlugins({ store, config, installed = [] }) {
         }
         const rest = mine.filter((f) => f !== set);
         const p = get(n);
-        if (p && on.has(n) && p.importers.length) {
+        if (p) {
           for (const fn of p.importers) await fn({ space, dir: path.join(config.dataDir, 'spaces', spaceId, 'plugins', n), files: rest, warn, tmpDir: config.tmpDir });
+          if (!on.has(n)) warn(`Plugin "${n}" is not enabled on this instance; its data was kept and will work once an admin enables it.`);
         } else if (rest.length) {
           const base = path.join(config.dataDir, 'spaces', spaceId, 'plugins', n);
           for (const f of rest) {
@@ -221,7 +223,7 @@ export function createPlugins({ store, config, installed = [] }) {
             try { await pipeline(await f.open(), fs.createWriteStream(dest)); }
             catch (e) { await fsp.rm(dest, { force: true }); warn(`A file of plugin "${n}" was skipped: ${e.message}`); }
           }
-          warn(`Plugin "${n}" is not enabled on this instance; its data was kept and will work once an admin installs and enables it.`);
+          warn(`Plugin "${n}" is not installed on this instance; its data was kept and will work once an admin installs and enables it.`);
         }
       }
     },

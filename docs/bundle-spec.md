@@ -107,8 +107,9 @@ people only; agent credentials cannot import or replace.
   `history/plugins/sqlite/snapshots.json` plus `snapshots/{sha256}.sqlite`.
 - `watermark`: settings only.
 
-On import, settings are validated against the plugin's spec. A plugin that is not installed and enabled on the
-importing instance has its files kept untouched (and re-exported later), with a warning. Files for plugins the
+On import, settings are validated against the plugin's spec. An installed plugin's own exporter and importer
+handle its files even while it is switched off. A plugin that is not installed on the importing instance has its
+files kept untouched (and re-exported later), with a warning. Plugin files count against the space size limit. Files for plugins the
 space does not list are skipped. The mapping into homefast: `sqlite` maps directly (`plugins/sqlite/app.sqlite`
 becomes `db/app.sqlite`); `watermark`'s banner setting is dropped with a warning; `functions` needs a
 configuration translation and `php` has no equivalent (static import with a warning).

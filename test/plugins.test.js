@@ -377,6 +377,28 @@ test('sqlite: an import for a plugin this instance has not enabled keeps the fil
   assert.deepEqual([...again.keys()].filter((k) => k.startsWith('plugins/sqlite/')).sort(), [...(await entries(await exportTo(admin, 'demo', false))).keys()].filter((k) => k.startsWith('plugins/sqlite/')).sort());
 });
 
+test('sqlite: snapshots round-trip while the plugin is switched off', async (x) => {
+  const { t, admin } = await world(x);
+  await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { snapshots: 'manual' } }, 'PUT');
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: 'CREATE TABLE n (v TEXT)' });
+  const { snapshot } = sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'create' }));
+  await admin.post('/api/admin/plugins/sqlite', { enabled: false });
+  const zip = await exportTo(admin, 'demo', true);
+  const keys = [...(await entries(zip)).keys()];
+  assert.ok(keys.includes(`history/plugins/sqlite/snapshots/${snapshot.sha256}.sqlite`), 'the CAS blob is exported');
+  assert.ok(keys.includes('history/plugins/sqlite/snapshots.json'));
+  assert.ok(!keys.some((k) => k.startsWith('plugins/sqlite/history/')));
+  // into an instance where sqlite is installed but off, then switched on
+  const t2 = await boot(); x.after(t2.close);
+  const a2 = await setupAdmin(t2);
+  assert.equal((await importAs(a2, fs.readFileSync(zip))).status, 201);
+  await a2.post('/api/admin/plugins/sqlite', { enabled: true });
+  const tok2 = (await (await a2.post('/api/tokens', { name: 'x', spaces: ['copy'], perms: ['db', 'read'] })).json()).token;
+  const list = await (await fetch(t2.base + '/mcp', { method: 'POST', headers: { authorization: `Bearer ${tok2}`, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'db_checkpoint', arguments: { slug: 'copy', action: 'list' } } }) })).json();
+  assert.equal(list.result.structuredContent.snapshots[0].sha256, snapshot.sha256);
+});
+
 test('sqlite: snapshot blobs survive garbage collection', async (x) => {
   const { t, admin } = await world(x);
   await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { snapshots: 'manual' } }, 'PUT');
