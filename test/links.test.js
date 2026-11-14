@@ -9,6 +9,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { viewerCookieName, SPACE_CSP } from '../src/security.js';
 import { MIGRATIONS, openDb } from '../src/db.js';
 import { sha256hex } from '../src/util.js';
+import { fmtTime } from '../src/dashboard.js';
 
 const DOC = { 'sec-fetch-dest': 'document' };
 const files = { files: [{ path: 'index.html', content: '<h1>hi</h1>' }, { path: 'a.css', content: 'x{}' }] };
@@ -256,6 +257,9 @@ test('branding shows on the password, 404 and expired pages; bad values are refu
   assert.match(sp, /id="sharing"/);
   assert.doesNotMatch(sp, /sfl_/, 'the URL is shown only when the link is created');
   assert.match(sp, /<option value="link" selected>/);
+  assert.equal(fmtTime('2026-11-14T09:05:07.123Z'), '<time datetime="2026-11-14T09:05:07.123Z">2026-11-14 09:05 UTC</time>');
+  assert.equal(fmtTime('x"><b>'), '<time datetime="x&quot;&gt;&lt;b&gt;">x&quot;&gt;&lt;b&gt; UTC</time>');
+  assert.match(sp, /<time datetime="\d{4}-[^"]+Z">/);
   assert.match(sp, /<select name="expires_in" data-expiry>.*<option value="7d">.*data-custom hidden>Custom…<\/option><\/select>.*type="datetime-local"/s, 'presets work without JS; Custom needs it');
   for (const p of pages) {
     const h = await p.text();

@@ -6,7 +6,8 @@ import { esc } from './util.js';
 export const PREVIEW_SANDBOX = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads';
 
 const fmtBytes = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n > 1024 ? `${(n / 1024).toFixed(1)} KB` : `${n} B`);
-const fmtTime = (t) => (t ? esc(t.replace('T', ' ').replace(/\.\d+Z$/, ' UTC')) : '');
+// Stored times are UTC ISO; the UTC text is the no-JS fallback and app.js shows the viewer's local time.
+export const fmtTime = (t) => (t ? `<time datetime="${esc(t)}">${esc(t.slice(0, 16).replace('T', ' '))} UTC</time>` : '');
 
 export function layout(title, cred, body, { nav = true } = {}) {
   const csrf = cred?.csrf ? `<meta name="csrf" content="${esc(cred.csrf)}">` : '';
@@ -163,6 +164,12 @@ export const APP_JS = `
       if (r.ok) location.reload();
       else status.textContent = (await r.json().catch(() => ({}))).error || 'Upload failed';
     });
+  }
+  for (const el of document.querySelectorAll('time[datetime]')) {
+    const d = new Date(el.dateTime);
+    if (isNaN(d)) continue;
+    el.title = el.textContent;
+    el.textContent = d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   }
   // Expiry: the Custom option needs JS, since datetime-local has no timezone; it is sent as UTC ISO.
   for (const sel of document.querySelectorAll('select[data-expiry]')) {
