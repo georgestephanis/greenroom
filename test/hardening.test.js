@@ -51,3 +51,12 @@ test('an invite can be redeemed once, even in parallel', async (x) => {
   assert.deepEqual(codes, [201, 400, 400]);
   assert.equal(t.db.prepare('SELECT COUNT(*) c FROM users').get().c, 2);
 });
+
+test('first-run setup creates one admin, even in parallel', async (x) => {
+  const t = await boot(); x.after(t.close);
+  const setup = (i, password = 'long enough password') => client(t.base).json('/api/setup', { name: 'A', email: `a${i}@example.com`, password });
+  assert.equal((await setup(9, 'short')).status, 400); // a failed attempt releases the claim
+  const codes = (await Promise.all([0, 1, 2].map((i) => setup(i)))).map((r) => r.status).sort();
+  assert.deepEqual(codes, [201, 403, 403]);
+  assert.equal(t.db.prepare('SELECT COUNT(*) c FROM users').get().c, 1);
+});

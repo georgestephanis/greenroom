@@ -71,8 +71,11 @@ export function createApp(overrides = {}) {
     const [a, b, c] = seg;
 
     if (a === 'setup' && m === 'POST') {
-      if (auth.userCount()) throw httpErr(403, 'Already set up');
-      const u = await auth.createUser({ email: body.email, password: body.password, role: 'admin', name: body.name });
+      // Same race as invites: claim first-run setup before the scrypt await.
+      if (auth.userCount() || db.prepare("INSERT OR IGNORE INTO meta (key,value) VALUES ('setup_claimed', ?)").run(now()).changes !== 1) throw httpErr(403, 'Already set up');
+      let u;
+      try { u = await auth.createUser({ email: body.email, password: body.password, role: 'admin', name: body.name }); }
+      catch (e) { db.prepare("DELETE FROM meta WHERE key = 'setup_claimed'").run(); throw e; }
       res.setHeader('Set-Cookie', sessionCookie(auth.createSession(u.id, { userAgent: req.headers['user-agent'], ip })));
       return { status: 201, body: { ok: true }, next: '/' };
     }
