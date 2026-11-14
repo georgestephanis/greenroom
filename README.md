@@ -6,7 +6,7 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 - **Versioned**: every publish is an immutable version over a content-addressed blob store; "live" is a pointer. Rollback makes a new version.
 - **Team login** with a dashboard: spaces, history, diffs, zip upload, invites, who-can-view.
 - **One file of state**: SQLite (`node:sqlite`) plus a blob directory. No native dependencies, no timers, no background workers.
-- Node 24+, AGPL-3.0-or-later.
+- Node 24+, GPL-3.0-or-later.
 
 This release covers the core (milestones M0 and M1). Agent tokens, OAuth/MCP and a publishing CLI (M2), and share links (M3) are not built yet; the schema is ready for them.
 
