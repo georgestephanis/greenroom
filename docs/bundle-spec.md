@@ -66,9 +66,10 @@ Timestamps are ISO-8601 UTC. IDs use homefast's prefixes (`spc_`, `ver_`, `usr_`
 
 A `git fast-import` stream on `refs/heads/main`: one commit per version in version order, with the
 version's author, message and timestamp (agents show as "Claude (via X)"), trailers
-`Freespace-Version` and `Freespace-Source`, and a placeholder email (`…@freespace.invalid`). Files are deltas from the
-parent version. A version with no parent that follows others (an imported restart) empties the tree and
-keeps the branch linear. The importer ignores this file; it exists so a space's history can be read with git:
+`Freespace-Version`, `Freespace-Source` and (when it has one) `Freespace-Parent`, and a placeholder email
+(`…@freespace.invalid`). The branch is always linear: each commit follows the previous version and carries the
+files as a delta from it, so a version published on an older base (or a restart with no parent) still shows up in
+`git log`. The real parent is only in the `Freespace-Parent` trailer. The importer ignores this file; it exists so a space's history can be read with git:
 
 ```bash
 git init site && cd site && git fast-import < history.fi && git checkout -f main

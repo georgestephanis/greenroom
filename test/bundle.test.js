@@ -195,6 +195,21 @@ test('a history that restarts from a new root still fast-imports', async (x) => 
   assert.equal(git('ls-tree', '-r', '--name-only', 'main').trim(), 'index.html', 'the restart commit does not inherit earlier files');
 });
 
+test('a branched history (publish with base:N) keeps every version reachable from main', async (x) => {
+  const { admin } = await world(x);
+  await admin.post('/api/spaces', { name: 'B', slug: 'b' });
+  const pub = (body) => admin.post('/api/spaces/b/versions', body);
+  await pub({ message: 'v1', files: [{ path: 'a.txt', content: '1' }] });
+  await pub({ message: 'v2', base: 'live', files: [{ path: 'b.txt', content: '2' }] });
+  await pub({ message: 'v3', base: 1, files: [{ path: 'c.txt', content: '3' }] }); // branches off v1
+  await pub({ message: 'v4', base: 'live', files: [{ path: 'd.txt', content: '4' }] });
+  const fi = (await readAll(await download(x, admin, '/spaces/b/export?history=1'))).get('history/history.fi');
+  const git = fastImport(x, fi);
+  assert.deepEqual(git('log', '--reverse', '--format=%s', 'main').trim().split('\n'), ['v1', 'v2', 'v3', 'v4']);
+  assert.match(git('log', '--format=%B', '--grep=v3', 'main'), /Freespace-Parent: ver_/);
+  assert.deepEqual(git('ls-tree', '-r', '--name-only', 'main~1').trim().split('\n'), ['a.txt', 'c.txt']);
+});
+
 test('a space with a .git path still exports a loadable stream', async (x) => {
   const { admin } = await world(x);
   await admin.post('/api/spaces', { name: 'G', slug: 'g' });

@@ -37,18 +37,16 @@ async function* chunks(store, sha, size) {
 
 /** The `git fast-import` stream: one commit per version, in version order, files as deltas from the parent. */
 async function* fastImport(store, space) {
-  const marks = new Map(), commits = new Map();
-  let mark = 0, last = null;
+  const marks = new Map();
+  let mark = 0, last = null, prev = null;
   const st = store.db.prepare('SELECT * FROM versions WHERE space_id = ? ORDER BY number'); // kept referenced: a temporary is finalized across yields
   for (const v of st.iterate(space.id)) {
     const cur = new Map(store.manifest(v.id).filter((f) => gitSafe(f.path)).map((f) => [f.path, f]));
-    const parent = commits.has(v.parent_version_id) ? v.parent_version_id : null;
-    const before = parent ? new Map(store.manifest(parent).filter((f) => gitSafe(f.path)).map((f) => [f.path, f])) : new Map();
+    // One linear branch: each commit follows the previous version, whatever its real parent was (a publish with
+    // base:N branches), so every version stays reachable. The real parent goes in a trailer.
+    const before = prev || new Map();
     const ops = [];
-    // A version with no known parent after other commits keeps the one linear branch: it follows the previous
-    // commit with an empty tree, so `git log` still shows one commit per version.
-    const from = parent ? commits.get(parent) : last;
-    if (!parent && last) ops.push('deleteall\n');
+    const from = last;
     for (const p of before.keys()) if (!cur.has(p)) ops.push(`D ${gitPath(p)}\n`);
     for (const [p, f] of cur) {
       if (before.get(p)?.sha256 === f.sha256) continue;
@@ -63,9 +61,10 @@ async function* fastImport(store, space) {
       ops.push(`M 100644 :${marks.get(f.sha256)} ${gitPath(p)}\n`);
     }
     const ts = Math.floor(Date.parse(v.created_at) / 1000);
-    const msg = Buffer.from(`${v.message || `Version ${v.number}`}\n\nFreespace-Version: ${v.id} (v${v.number})\nFreespace-Source: ${v.source || 'unknown'}\n`);
-    commits.set(v.id, ++mark);
+    const msg = Buffer.from(`${v.message || `Version ${v.number}`}\n\nFreespace-Version: ${v.id} (v${v.number})\nFreespace-Source: ${v.source || 'unknown'}\n${v.parent_version_id ? `Freespace-Parent: ${v.parent_version_id}\n` : ''}`);
+    ++mark;
     last = mark;
+    prev = cur;
     yield `commit refs/heads/main\nmark :${mark}\nauthor ${person(v.author_name, v.author_credential_id, ts)}\ncommitter ${person(v.author_name, v.author_credential_id, ts)}\ndata ${msg.length}\n`;
     yield msg;
     yield `\n${from ? `from :${from}\n` : ''}${ops.join('')}\n`;
