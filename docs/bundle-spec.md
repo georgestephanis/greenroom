@@ -11,7 +11,7 @@ and homefast later, so it stays small, versioned and boring. The committed fixtu
 ```
 space.json
 site/…                  the live version's files, browsable as-is
-plugins/{name}/…        each enabled plugin's current data (none yet; see Plugins)
+plugins/{name}/…        each plugin's current data, plus `settings.json` (see Plugins)
 ```
 
 **`{slug}.freespace-history.zip`** (`kind: "history"`): the above, plus
@@ -19,7 +19,7 @@ plugins/{name}/…        each enabled plugin's current data (none yet; see Plug
 ```
 history/versions.json   every version, oldest first
 history/blobs/ab/{sha256}   every unique blob any version uses (content-addressed)
-history/plugins/{name}/…    plugin history (none yet)
+history/plugins/{name}/…    plugin history (history bundles only)
 history/history.fi      git fast-import stream, informational
 activity.json           the space's audit trail
 ```
@@ -98,12 +98,20 @@ people only; agent credentials cannot import or replace.
 - A `current` bundle becomes a single version. Routing is recompiled, never taken from the bundle.
 - Imported spaces are created with the bundle's privacy and `noindex`, and with no share links.
 
-## Plugins (not yet)
+## Plugins
 
-Core is static-only. A bundle may list `plugins` in `space.json` and carry `plugins/{name}/…`; freespace today
-imports the static site, skips that data and says so in the import warnings. The mapping into homefast, when
-plugins exist: `sqlite` maps directly (`plugins/sqlite/app.sqlite` becomes homefast's `db/app.sqlite`),
-`functions` needs a configuration translation, `php` has no equivalent and imports as static with a warning.
+`space.json`'s `space.plugins` lists the plugins the space uses. Each owns `plugins/{name}/…` (current data) and
+`history/plugins/{name}/…` (history bundles only). Core writes `plugins/{name}/settings.json`; the plugin writes the rest.
+
+- `sqlite`: `plugins/sqlite/app.sqlite` (a consistent copy) and, in history bundles,
+  `history/plugins/sqlite/snapshots.json` plus `snapshots/{sha256}.sqlite`.
+- `watermark`: settings only.
+
+On import, settings are validated against the plugin's spec. A plugin that is not installed and enabled on the
+importing instance has its files kept untouched (and re-exported later), with a warning. Files for plugins the
+space does not list are skipped. The mapping into homefast: `sqlite` maps directly (`plugins/sqlite/app.sqlite`
+becomes `db/app.sqlite`); `watermark`'s banner setting is dropped with a warning; `functions` needs a
+configuration translation and `php` has no equivalent (static import with a warning).
 
 ## For the homefast importer
 

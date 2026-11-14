@@ -9,7 +9,7 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 - **One file of state**: SQLite (`node:sqlite`) plus a blob directory. No native dependencies, no timers, no background workers.
 - Node 24+, GPL-3.0-or-later.
 
-This release covers milestones M0–M4: the core, OAuth and MCP, client sharing (share links, passwords, expiry, view tracking, branding), and portability (export and import). Plugins (M5), subdomain mode and a publishing CLI are not built yet.
+This release covers milestones M0–M5: the core, OAuth and MCP, client sharing (share links, passwords, expiry, view tracking, branding), portability (export and import), and plugins (an API, a `sqlite` plugin and a `watermark` reference plugin; see [docs/writing-a-plugin.md](docs/writing-a-plugin.md)). Subdomain mode and a publishing CLI are not built yet.
 
 ## Run it
 
@@ -42,7 +42,7 @@ Spaces share one origin with the dashboard, so isolation is enforced by headers,
 7. Per-document write tokens for the future data API are injected into documents only.
 8. The dashboard's preview iframe has a `sandbox` attribute without `allow-same-origin`.
 
-Rule 5 has nothing to rewrite yet: core sets no tenant cookies, and plugins that could arrive with M5.
+Rule 5 applies to plugin routes: core rewrites every cookie a plugin sets, and sets none itself.
 
 Trade-offs you will notice: pages can't use their own `localStorage` or cookies (they're sandboxed), and absolute paths like `/app.css` must become relative (`app.css`) or be mapped with `_redirects`.
 
@@ -92,3 +92,7 @@ See `CONTRIBUTING.md`.
 ## AI disclosure
 
 This project was written with substantial help from Claude (Anthropic) via Claude Code, working from a human-written specification. A person directed the work and is responsible for it; the tests and the security model above are the things to review first.
+
+## Plugins
+
+Plugins are off until an admin turns them on (Instance page, or `POST /api/admin/plugins/:name`), and each space then opts in on its own page (`PUT /api/spaces/:slug/plugins/:name`, session only). Bundled: `sqlite` (a per-space SQLite database with a table-by-table browser policy, MCP tools and version-linked snapshots) and `watermark` (a client banner on share-link views). Extra plugins load from `FREESPACE_PLUGINS=/path/a.js,/path/b.js`. Plugins never see the core database or any credential, and can't relax the CSP, cookie or CORS rules. Their files go in both export zips; a plugin missing on the importing instance keeps its data and warns. See [docs/writing-a-plugin.md](docs/writing-a-plugin.md).
