@@ -167,11 +167,11 @@ export class Store {
     return { redirects, headers, warnings };
   }
 
-  async rollback(cred, space, number) {
+  async rollback(cred, space, number, source = 'ui') {
     const target = this.version(space.id, Number(number));
     if (!target) throw httpErr(404, 'No such version');
     const entries = new Map(this.manifest(target.id).map((f) => [f.path, f]));
-    return this.createVersion(cred, space, entries, { message: `Rollback to v${target.number}`, source: 'ui' });
+    return this.createVersion(cred, space, entries, { message: `Rollback to v${target.number}`, source });
   }
 
   // ---- diff (computed from manifests on demand) ----

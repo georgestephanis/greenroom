@@ -154,6 +154,37 @@ const MIGRATIONS = [
   );
   CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
   `,
+  // M2 (freespace-only): OAuth. The grant itself is an api_keys row (kind 'oauth'); these hang off it,
+  // so revoking or deleting the grant kills every token issued under it.
+  `
+  CREATE TABLE oauth_tokens (
+    token_hash TEXT PRIMARY KEY,                    -- sha256 of the opaque token
+    grant_id TEXT NOT NULL REFERENCES api_keys(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,                             -- access | refresh
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT                                    -- refresh only: set on rotation; reuse revokes the grant
+  );
+  CREATE INDEX idx_oauth_tokens_grant ON oauth_tokens(grant_id);
+  CREATE TABLE oauth_codes (
+    code_hash TEXT PRIMARY KEY,
+    client_id TEXT NOT NULL,
+    client_name TEXT NOT NULL,
+    redirect_uri TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    user_id TEXT NOT NULL,
+    scope_json TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT,
+    grant_id TEXT
+  );
+  CREATE TABLE oauth_clients (                      -- dynamic registration (off unless an admin enables it)
+    client_id TEXT PRIMARY KEY,
+    client_name TEXT NOT NULL,
+    redirect_uris_json TEXT NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];
 
 export function openDb(file) {

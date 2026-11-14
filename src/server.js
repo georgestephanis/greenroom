@@ -7,8 +7,10 @@ import { loadConfig } from './config.js';
 import { openDb } from './db.js';
 import { CAS } from './cas.js';
 import { Store } from './store.js';
-import { Auth, httpErr, can, requireSession, requireAdmin, SESSION_COOKIE, parseCookies } from './auth.js';
-import { applyDashboardHeaders, checkWrite } from './security.js';
+import { Auth, httpErr, can, requireSession, requireAdmin, SESSION_COOKIE, normaliseScope, scopeString } from './auth.js';
+import { OAuth } from './oauth.js';
+import { createMcp } from './mcp.js';
+import { applyDashboardHeaders, checkWrite, DASHBOARD_CSP } from './security.js';
 import { createSpaceHandler } from './serve.js';
 import { importZip } from './zip.js';
 import { newId, now, randomToken, sha256hex } from './util.js';
@@ -38,6 +40,8 @@ export function createApp(overrides = {}) {
   const store = new Store(db, cas, config);
   const auth = new Auth(db, config);
   const handleSpace = createSpaceHandler({ store, auth, config });
+  const oauth = new OAuth({ db, auth, config });
+  const mcp = createMcp({ store, db });
 
   // Login throttle: in memory, pruned on access (no timers). Per account+IP, 10 attempts per 15 minutes.
   // Counted before the scrypt await so parallel attempts can't slip past; a success clears it.
@@ -123,6 +127,30 @@ export function createApp(overrides = {}) {
       store.log(cred, 'user.disabled', null, { user: b });
       return { status: 200, body: { ok: true }, next: '/team' };
     }
+    // Pasted agent tokens: minted and revoked only by a person (escalation set), same rows as OAuth grants.
+    if (a === 'tokens' && !b && m === 'POST') {
+      requireSession(cred);
+      const list = (v) => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
+      const scope = normaliseScope({ spaces: list(body.spaces).filter((s) => store.space(s)), create: body.create === '1' || body.create === true, perms: list(body.perms) });
+      if (!scope) throw httpErr(400, 'Unknown permission');
+      const token = 'fsa_' + randomToken(32), name = String(body.name || '').trim().slice(0, 80) || 'Agent token';
+      db.prepare("INSERT INTO api_keys (id,name,key_hash,token_prefix,user_id,created_at,kind,scope_json) VALUES (?,?,?,?,?,?,'agent_token',?)")
+        .run(newId('key'), name, sha256hex(token), token.slice(0, 12), cred.userId, now(), JSON.stringify(scope));
+      return { status: 201, body: { token, name, scope: scopeString(scope) }, minted: token };
+    }
+    if (a === 'tokens' && c === 'revoke' && m === 'POST') {
+      requireSession(cred);
+      const row = db.prepare('SELECT * FROM api_keys WHERE id = ?').get(b);
+      if (!row || (row.user_id !== cred.userId && cred.user.role !== 'admin')) throw httpErr(404, 'No such token');
+      auth.revokeKey(row.id);
+      store.log(cred, 'token.revoked', null, { key: row.id });
+      return { status: 200, body: { ok: true }, next: '/access' };
+    }
+    if (a === 'admin' && b === 'dcr' && m === 'POST') {
+      requireAdmin(cred);
+      oauth.setDcr(body.enabled === '1' || body.enabled === true);
+      return { status: 200, body: { enabled: oauth.dcrEnabled() }, next: '/instance' };
+    }
     if (a === 'admin' && b === 'gc' && m === 'POST') {
       requireAdmin(cred);
       const r = await store.maybeGc(true);
@@ -195,11 +223,26 @@ export function createApp(overrides = {}) {
     if (m) return html(res, 200, ui.authPage('Join the team', null, url.searchParams.get('error'), ui.setupFields, '/api/invites/accept', 'Join', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     if (!cred || cred.type !== 'session') {
       if (!auth.userCount()) return redirect(res, '/setup', 302);
-      return redirect(res, `/login?next=${encodeURIComponent(p)}`, 302);
+      return redirect(res, `/login?next=${encodeURIComponent(p + url.search)}`, 302);
+    }
+    if (p === '/oauth/authorize') {
+      const q = Object.fromEntries(url.searchParams);
+      let r;
+      try { r = await oauth.checkRequest(q); } catch (e) { return html(res, 400, ui.messagePage(cred, 'Cannot connect this app', e.message)); }
+      if (r.error) return redirect(res, oauth.redirectWith(r.redirect_uri, { error: r.error, error_description: r.desc, state: r.state }, req), 302);
+      // CSP form-action must allow the post-consent redirect to the client, or browsers block it.
+      const ru = new URL(r.redirect_uri);
+      res.setHeader('Content-Security-Policy', DASHBOARD_CSP.replace("form-action 'self'", `form-action 'self' ${/^https?:$/.test(ru.protocol) ? ru.origin : ru.protocol}`));
+      return html(res, 200, ui.consentPage(cred, r.client, q, r.requested, store.listSpaces()));
+    }
+    if (p === '/access') {
+      const rows = db.prepare(`SELECT k.*, u.display_name AS granter FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.revoked_at IS NULL ${cred.user.role === 'admin' ? '' : 'AND k.user_id = ?'} ORDER BY k.created_at DESC`)
+        .all(...(cred.user.role === 'admin' ? [] : [cred.userId]));
+      return html(res, 200, ui.accessPage(cred, rows.map((r) => ({ ...r, scope: scopeString(JSON.parse(r.scope_json)) })), store.listSpaces()));
     }
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
     if (p === '/team') return html(res, 200, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
-    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null)); }
+    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled())); }
     m = /^\/spaces\/([^/]+)(\/diff)?$/.exec(p);
     if (m) {
       const space = store.space(m[1]);
@@ -218,11 +261,61 @@ export function createApp(overrides = {}) {
   }
   const esc2 = (s) => String(s).replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
+  async function parseBody(req, isForm) {
+    const raw = await readBody(req, isForm ? 1 << 20 : config.maxJsonBytes);
+    if (!raw.length) return {};
+    try {
+      if (!isForm) return JSON.parse(raw.toString());
+      const out = {};
+      for (const [k, v] of new URLSearchParams(raw.toString())) out[k] = k in out ? [].concat(out[k], v) : v; // repeated keys -> array
+      return out;
+    } catch { throw httpErr(400, 'Malformed body'); }
+  }
+
+  // Token, revocation and registration endpoints: called by clients, never with a cookie, so no CSRF
+  // check applies and cookies are ignored entirely.
+  async function oauthEndpoint(req, res, url) {
+    if (req.method !== 'POST') return json(res, 405, { error: 'invalid_request' });
+    try {
+      const body = await parseBody(req, (req.headers['content-type'] || '').startsWith('application/x-www-form-urlencoded'));
+      if (url.pathname === '/oauth/token') return json(res, 200, oauth.token(body));
+      if (url.pathname === '/oauth/revoke') { oauth.revoke(body); return json(res, 200, {}); }
+      return json(res, 201, oauth.register(body));
+    } catch (e) {
+      if (!e.status) throw e;
+      return json(res, e.status, { error: e.oauth || 'invalid_request', error_description: e.message });
+    }
+  }
+
+  // MCP: Bearer only. A dashboard cookie never authenticates here.
+  async function handleMcp(req, res) {
+    const challenge = (extra = '') => `Bearer resource_metadata="${oauth.issuer(req)}/.well-known/oauth-protected-resource/mcp"${extra}`;
+    if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return json(res, 405, { error: 'POST only (no SSE stream)' }); }
+    const cred = auth.resolve({ headers: { authorization: req.headers.authorization } });
+    if (!cred) {
+      res.setHeader('WWW-Authenticate', challenge());
+      return json(res, 401, { error: 'Authentication required' });
+    }
+    let msg;
+    try { msg = JSON.parse((await readBody(req, config.maxJsonBytes)).toString()); } catch (e) { if (e.status) throw e; return json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); }
+    const r = await mcp(cred, msg);
+    if (r.insufficientScope) res.setHeader('WWW-Authenticate', challenge(`, error="insufficient_scope", scope="${r.insufficientScope}"`));
+    if (!r.body) { res.statusCode = r.status; return res.end(); }
+    return json(res, r.status, r.body);
+  }
+
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, 'http://x');
     try {
       if (url.pathname === '/s' || url.pathname.startsWith('/s/')) return await handleSpace(req, res, url);
       applyDashboardHeaders(res);
+      if (url.pathname.startsWith('/.well-known/oauth-')) {
+        if (/^\/\.well-known\/oauth-protected-resource(\/mcp)?$/.test(url.pathname)) return json(res, 200, oauth.protectedResource(req));
+        if (url.pathname === '/.well-known/oauth-authorization-server') return json(res, 200, oauth.serverMetadata(req));
+        return json(res, 404, { error: 'Not found' });
+      }
+      if (url.pathname === '/mcp') return await handleMcp(req, res);
+      if (['/oauth/token', '/oauth/revoke', '/oauth/register'].includes(url.pathname)) return await oauthEndpoint(req, res, url);
       const cred = auth.resolve(req);
       const write = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
       if (!write && url.pathname.startsWith('/api/')) {
@@ -232,15 +325,13 @@ export function createApp(overrides = {}) {
       if (!write) return await dashboard(req, res, url, cred);
 
       const isUpload = /^\/api\/spaces\/[^/]+\/upload$/.test(url.pathname);
-      const ctype = (req.headers['content-type'] || '').split(';')[0];
-      const isForm = ctype === 'application/x-www-form-urlencoded';
-      let body = {};
-      if (!isUpload) {
-        const raw = await readBody(req, isForm ? 1 << 20 : config.maxJsonBytes);
-        if (raw.length) {
-          try { body = isForm ? Object.fromEntries(new URLSearchParams(raw.toString())) : JSON.parse(raw.toString()); }
-          catch { throw httpErr(400, 'Malformed body'); }
-        }
+      const isForm = (req.headers['content-type'] || '').split(';')[0] === 'application/x-www-form-urlencoded';
+      const body = isUpload ? {} : await parseBody(req, isForm);
+      if (url.pathname === '/oauth/authorize') { // the person's consent: cookie session + CSRF like any dashboard form
+        const refused = checkWrite(req, cred, body, config.publicUrl);
+        if (refused) throw httpErr(403, refused);
+        if (!cred) throw httpErr(401, 'Sign in required');
+        return redirect(res, await oauth.approve(cred, body, req));
       }
       const refusal = checkWrite(req, cred, body, config.publicUrl);
       if (refusal) throw httpErr(403, refusal);
@@ -251,6 +342,7 @@ export function createApp(overrides = {}) {
       if (!url.pathname.startsWith('/api/')) throw httpErr(404, 'Not found');
       const r = await api(req, res, url, cred, body);
       if (isForm) {
+        if (r.minted) return html(res, 201, ui.accessPage(cred, [], store.listSpaces(), r.minted));
         if (r.invite) return html(res, 201, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), 1, r.body.invite));
         return redirect(res, safeNext(r.next));
       }

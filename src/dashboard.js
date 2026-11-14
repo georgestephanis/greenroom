@@ -13,7 +13,7 @@ export function layout(title, cred, body, { nav = true } = {}) {
   const admin = cred?.user?.role === 'admin';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} · freespace</title>${csrf}<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body>${nav && cred ? `<header><a class="brand" href="/">freespace</a><nav><a href="/">Spaces</a>${admin ? '<a href="/team">Team</a><a href="/instance">Instance</a>' : ''}
+<body>${nav && cred ? `<header><a class="brand" href="/">freespace</a><nav><a href="/">Spaces</a><a href="/access">Access</a>${admin ? '<a href="/team">Team</a><a href="/instance">Instance</a>' : ''}
 <form method="post" action="/api/logout" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/login"><button class="link">Sign out (${esc(cred.user.display_name || cred.user.username)})</button></form></nav></header>` : ''}
 <main>${body}</main></body></html>`;
 }
@@ -74,11 +74,50 @@ ${created ? `<section class="card ok"><p>Invite link (shown once, valid 7 days):
 <small>${invites} unused invite(s) outstanding.</small></section>`);
 }
 
-export function instancePage(cred, stats, gc) {
+export function instancePage(cred, stats, gc, dcr) {
   return layout('Instance', cred, `<h1>Instance</h1><ul><li>${stats.spaces} spaces, ${stats.versions} versions, ${stats.users} people</li><li>${fmtBytes(stats.bytesReferenced)} referenced in blob storage</li></ul>
 ${gc ? `<p class="ok">GC removed ${gc.removed} file(s), freed ${fmtBytes(gc.freed)}.</p>` : ''}
 <form method="post" action="/api/admin/gc">${hidden(cred)}<input type="hidden" name="_next" value="/instance?gc=1"><button>Run GC</button></form>
-<p><small>Garbage collection also runs lazily after publishes and deletes (at most every few hours). There are no background timers.</small></p>`);
+<p><small>Garbage collection also runs lazily after publishes and deletes (at most every few hours). There are no background timers.</small></p>
+<section class="card"><h2>Dynamic client registration</h2><p>${dcr ? 'On' : 'Off'}. Clients normally identify themselves with a metadata URL; turn this on only for clients that need RFC 7591 registration.</p>
+<form method="post" action="/api/admin/dcr">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${dcr ? '0' : '1'}"><button>${dcr ? 'Turn off' : 'Turn on'}</button></form></section>`);
+}
+
+export const messagePage = (cred, title, msg) => layout(title, cred, `<section class="card narrow"><h1>${esc(title)}</h1><p>${esc(msg)}</p></section>`, { nav: false });
+
+const PERM_LABELS = { read: 'Read files and history', publish: 'Publish and roll back', db: 'Use space databases', share: 'Manage share links', export: 'Export spaces' };
+// Space picker, create toggle and permission picker: shared by OAuth consent and the token minting form.
+function scopeFields(spaces, pick = { spaces: [], create: false, perms: ['read'] }) {
+  return `<fieldset><legend>Spaces</legend>${spaces.map((s) => `<label class="check"><input type="checkbox" name="spaces" value="${esc(s.slug)}"${pick.spaces.includes(s.slug) ? ' checked' : ''}> ${esc(s.name)} <small>/s/${esc(s.slug)}/</small></label>`).join('') || '<small>No spaces yet.</small>'}
+<label class="check"><input type="checkbox" name="create" value="1"${pick.create ? ' checked' : ''}> Can create new spaces (they join this access)</label></fieldset>
+<fieldset><legend>Permissions</legend>${Object.entries(PERM_LABELS).map(([k, l]) => `<label class="check"><input type="checkbox" name="perms" value="${k}"${pick.perms.includes(k) ? ' checked' : ''}> ${esc(l)}</label>`).join('')}</fieldset>`;
+}
+
+export function consentPage(cred, client, q, requested, spaces) {
+  const keep = ['client_id', 'redirect_uri', 'state', 'code_challenge', 'code_challenge_method', 'response_type', 'scope']
+    .filter((k) => q[k] !== undefined).map((k) => `<input type="hidden" name="${k}" value="${esc(q[k])}">`).join('');
+  const pick = requested.perms.length || requested.spaces.length || requested.create ? requested : undefined;
+  return layout('Connect an app', cred, `<section class="card narrow"><h1>Connect ${esc(client.client_name)}?</h1>
+<p><strong>${esc(client.client_name)}</strong> (<code>${esc(client.client_id)}</code>) wants to act as you, ${esc(cred.user.display_name || cred.user.username)}. It will send you back to <code>${esc(new URL(q.redirect_uri).origin)}</code>.</p>
+<p><small>It can never manage people, tokens or settings, or make a space public. You can revoke it any time under Access.</small></p>
+<form method="post" action="/oauth/authorize">${hidden(cred)}${keep}${scopeFields(spaces, pick)}
+<button name="decision" value="approve">Allow</button> <button name="decision" value="deny" class="link">Deny</button></form></section>`, { nav: false });
+}
+
+export function accessPage(cred, rows, spaces, minted) {
+  if (minted) return layout('Access', cred, `<h1>New agent token</h1><section class="card ok"><p>Copy it now; it is shown once.</p><input readonly class="wide" value="${esc(minted)}"></section><p><a href="/access">Back to Access</a></p>`);
+  const groups = new Map();
+  for (const r of rows) {
+    const key = r.kind === 'oauth' ? `${r.client_name} — ${r.client_id}` : 'Pasted agent tokens';
+    groups.set(key, [...(groups.get(key) || []), r]);
+  }
+  const admin = cred.user.role === 'admin';
+  const list = [...groups].map(([g, rs]) => `<h2>${esc(g)}</h2><table><thead><tr><th>Name</th><th>Scope</th>${admin ? '<th>Granted by</th>' : ''}<th>Last used</th><th></th></tr></thead><tbody>${rs.map((r) => `<tr><td>${esc(r.name)}<br><small>${fmtTime(r.created_at)}</small></td><td><code>${esc(r.scope)}</code></td>${admin ? `<td>${esc(r.granter)}</td>` : ''}<td>${fmtTime(r.last_used_at) || '<small>never</small>'}</td>
+<td><form method="post" action="/api/tokens/${esc(r.id)}/revoke" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/access"><button class="link">Revoke</button></form></td></tr>`).join('')}</tbody></table>`).join('');
+  return layout('Access', cred, `<h1>Access</h1><p>Apps and agents that act for ${admin ? 'members of this team' : 'you'}. Revoking ends them immediately.</p>
+${list || '<p>Nothing connected yet.</p>'}
+<section class="card"><h2>New agent token</h2><p><small>For agents that take a pasted <code>Authorization: Bearer</code> token instead of signing in.</small></p>
+<form method="post" action="/api/tokens">${hidden(cred)}<input type="hidden" name="_next" value="/access"><label>Label (shown in history)<input name="name" required></label>${scopeFields(spaces)}<button>Create token</button></form></section>`);
 }
 
 export const notFoundPage = (cred) => layout('Not found', cred, '<h1>Not found</h1><p><a href="/">Back to spaces</a></p>');
@@ -112,7 +151,7 @@ a{color:var(--accent)}header{display:flex;gap:1rem;align-items:center;justify-co
 header nav{display:flex;gap:1rem;align-items:center;flex-wrap:wrap}.brand{font-weight:700;text-decoration:none}
 main{max-width:56rem;margin:0 auto;padding:1rem}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.5rem;border-bottom:1px solid var(--line);vertical-align:top}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1rem;margin:1rem 0}.narrow{max-width:24rem;margin:3rem auto}
-label{display:block;margin:.5rem 0}input,select,button{font:inherit;padding:.4rem .6rem}input:not([type=file]),select{width:100%;max-width:28rem;display:block}
+label{display:block;margin:.5rem 0}input,select,button{font:inherit;padding:.4rem .6rem}input:not([type=file]):not([type=checkbox]),select{width:100%;max-width:28rem;display:block}label.check{display:flex;gap:.5rem;align-items:baseline}fieldset{border:1px solid #ddd;margin:.75rem 0}
 button{cursor:pointer}button.link{background:none;border:0;color:var(--accent);padding:0;text-decoration:underline}.inline{display:inline}
 .preview{width:100%;height:24rem;border:1px solid var(--line);border-radius:8px}.badge{font-size:.75rem;border:1px solid var(--line);border-radius:99px;padding:.1rem .5rem}
 .badge.live{color:var(--good)}.error{color:var(--bad)}.ok{color:var(--good)}small{color:var(--mut)}.history{padding-left:1.2rem}.history li{margin:.75rem 0}

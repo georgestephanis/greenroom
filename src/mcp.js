@@ -1,0 +1,108 @@
+// MCP over Streamable HTTP (JSON responses, no SSE), issue #214 section 7.
+// Every tool checks the credential's scope; a missing scope is HTTP 403 insufficient_scope naming
+// what to ask for, so the client can step up through /oauth/authorize.
+import { httpErr, can } from './auth.js';
+
+const PROTOCOL = '2025-06-18';
+const slugArg = { slug: { type: 'string', description: 'Space slug' } };
+const obj = (props, required = Object.keys(props)) => ({ type: 'object', properties: props, required });
+
+export const TOOLS = [
+  { name: 'list_spaces', description: 'List the spaces this credential can see.', inputSchema: obj({}) },
+  { name: 'get_space', description: 'Get one space and its live version.', inputSchema: obj(slugArg) },
+  { name: 'create_space', description: 'Create a space (needs spaces:create). It is added to this grant.', inputSchema: obj({ name: { type: 'string' }, slug: { type: 'string' } }, ['name']) },
+  {
+    name: 'publish',
+    description: 'Publish a new version. Files carry content (utf-8), base64, or the sha256 of an existing blob. Without base the version holds exactly these files; with base ("live" or a version number) it starts from that version, then applies files and delete.',
+    inputSchema: obj({
+      ...slugArg,
+      files: { type: 'array', items: obj({ path: { type: 'string' }, content: { type: 'string' }, base64: { type: 'string' }, sha256: { type: 'string' } }, ['path']) },
+      delete: { type: 'array', items: { type: 'string' } },
+      base: { type: ['string', 'integer'] },
+      message: { type: 'string' },
+    }, ['slug']),
+  },
+  { name: 'read_file', description: 'Read a file from the live version (or version N).', inputSchema: obj({ ...slugArg, path: { type: 'string' }, version: { type: 'integer' } }, ['slug', 'path']) },
+  { name: 'list_versions', description: 'Version history, newest first.', inputSchema: obj(slugArg) },
+  { name: 'diff_versions', description: 'Files added, removed and changed between two versions.', inputSchema: obj({ ...slugArg, from: { type: 'integer' }, to: { type: 'integer' } }) },
+  { name: 'rollback', description: 'Make an earlier version live again (as a new version).', inputSchema: obj({ ...slugArg, version: { type: 'integer' } }) },
+];
+
+const insufficient = (scope) => Object.assign(httpErr(403, `This credential needs scope: ${scope}`), { insufficientScope: scope });
+
+export function createMcp({ store, db }) {
+  const inScope = (cred, slug) => cred.scope.spaces === '*' || cred.scope.spaces.includes(slug);
+  function space(cred, slug, perm) {
+    const s = store.space(String(slug || ''));
+    if (!s) throw httpErr(404, 'No such space');
+    const need = [];
+    if (!inScope(cred, s.slug)) need.push(`space:${s.slug}`);
+    if (perm && !can({ scope: { ...cred.scope, spaces: '*' } }, perm)) need.push(perm);
+    if (need.length) throw insufficient(need.join(' '));
+    return s;
+  }
+  const pubSpace = (s) => ({ slug: s.slug, name: s.name, privacy: s.privacy, url: `/s/${s.slug}/`, live_version: s.live_number ?? null });
+  const pubVersion = (v) => ({ number: v.number, message: v.message, author: v.author_name, source: v.source, files: v.total_files, bytes: v.total_bytes, created_at: v.created_at });
+
+  const tools = {
+    list_spaces: (cred) => ({ spaces: store.listSpaces(cred.scope.spaces).map(pubSpace) }),
+    get_space: (cred, a) => {
+      const s = space(cred, a.slug);
+      return { space: pubSpace(store.listSpaces([s.slug])[0] || s) };
+    },
+    create_space: (cred, a) => {
+      if (!can(cred, 'create')) throw insufficient('spaces:create');
+      const s = store.createSpace(cred, { name: a.name, slug: a.slug });
+      if (cred.scope.spaces !== '*') { // the new space joins this grant's scope (same row for OAuth and pasted tokens)
+        const sc = { ...cred.scope, spaces: [...cred.scope.spaces, s.slug] };
+        db.prepare('UPDATE api_keys SET scope_json = ? WHERE id = ?').run(JSON.stringify(sc), cred.id);
+      }
+      return { space: pubSpace(s) };
+    },
+    publish: async (cred, a) => {
+      const s = space(cred, a.slug, 'publish');
+      const v = await store.publish(cred, s, { files: a.files || [], remove: a.delete || [], base: a.base, message: a.message, source: 'mcp' });
+      return { version: pubVersion(v), warnings: v.warnings };
+    },
+    read_file: async (cred, a) => {
+      const s = space(cred, a.slug, 'read');
+      const v = a.version ? store.versions(s.id).find((x) => x.number === Number(a.version)) : { id: s.live_version_id };
+      const f = v?.id && store.file(v.id, String(a.path || '').replace(/^\/+/, ''));
+      if (!f) throw httpErr(404, 'No such file');
+      if (f.size > 5 * 1024 * 1024) throw httpErr(413, 'File too large to read here');
+      const buf = await store.cas.read(f.sha256);
+      const text = /^text\/|json|javascript|xml|svg/.test(f.content_type);
+      return { path: f.path, content_type: f.content_type, size: f.size, sha256: f.sha256, ...(text ? { content: buf.toString('utf8') } : { base64: buf.toString('base64') }) };
+    },
+    list_versions: (cred, a) => ({ versions: store.versions(space(cred, a.slug, 'read').id).map(pubVersion) }),
+    diff_versions: (cred, a) => store.diff(space(cred, a.slug, 'read'), a.from, a.to),
+    rollback: async (cred, a) => ({ version: pubVersion(await store.rollback(cred, space(cred, a.slug, 'publish'), a.version, 'mcp')) }),
+  };
+
+  /** One JSON-RPC message in, { status, body, headers } out. */
+  return async function handle(cred, msg) {
+    const reply = (result) => ({ status: 200, body: { jsonrpc: '2.0', id: msg.id, result } });
+    if (!msg || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return { status: 400, body: { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } } };
+    if (msg.id === undefined) return { status: 202 }; // notification
+    switch (msg.method) {
+      case 'initialize':
+        return reply({ protocolVersion: msg.params?.protocolVersion || PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'freespace', version: '0.2.0' } });
+      case 'ping': return reply({});
+      case 'tools/list': return reply({ tools: TOOLS });
+      case 'tools/call': {
+        const fn = tools[msg.params?.name];
+        if (!fn) return { status: 200, body: { jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'Unknown tool' } } };
+        try {
+          const out = await fn(cred, msg.params.arguments || {});
+          return reply({ content: [{ type: 'text', text: JSON.stringify(out) }], structuredContent: out });
+        } catch (e) {
+          if (e.insufficientScope) return { status: 403, insufficientScope: e.insufficientScope, body: { jsonrpc: '2.0', id: msg.id, error: { code: -32001, message: e.message } } };
+          if (!e.status) throw e;
+          return reply({ content: [{ type: 'text', text: e.message }], isError: true });
+        }
+      }
+      default:
+        return { status: 200, body: { jsonrpc: '2.0', id: msg.id, error: { code: -32601, message: 'Method not found' } } };
+    }
+  };
+}

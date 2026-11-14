@@ -1,6 +1,6 @@
 {
   "name": "freespace",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Small self-hosted place for a team to host what its agents make",
   "type": "module",
   "license": "GPL-3.0-or-later",

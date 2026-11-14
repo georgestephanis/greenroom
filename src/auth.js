@@ -51,6 +51,25 @@ export function normaliseScope(s) {
   return { spaces, create: s.create === true, perms: s.perms, readOnly: s.readOnly === true };
 }
 
+/**
+ * OAuth scope strings <-> structured scope. space:{slug}, spaces:create, publish, db, share, export, read.
+ * Anything else throws: an unknown string fails the whole request, never silently widens or narrows it.
+ */
+export function parseScopeString(str) {
+  const sc = { spaces: [], create: false, perms: [], readOnly: false };
+  for (const t of String(str || '').split(' ').filter(Boolean)) {
+    if (t.startsWith('space:') && /^[a-z0-9-]+$/.test(t.slice(6))) sc.spaces.push(t.slice(6));
+    else if (t === 'spaces:create') sc.create = true;
+    else if (ALL_PERMS.includes(t)) sc.perms.push(t);
+    else throw httpErr(400, `Unknown scope: ${t}`);
+  }
+  return sc;
+}
+export function scopeString(sc) {
+  const sp = sc.spaces === '*' ? ['space:*'] : sc.spaces.map((s) => `space:${s}`);
+  return [...sp, ...(sc.create ? ['spaces:create'] : []), ...sc.perms].join(' ');
+}
+
 /** Can this credential do `perm` on `slug`? (slug null => instance-level, e.g. listing.) */
 export function can(cred, perm, slug = null) {
   if (!cred) return false;
@@ -156,18 +175,32 @@ export class Auth {
   }
 
   #token(token) {
-    if (!token.startsWith('fsa_') || token.length < 16) return null;
-    const row = this.db.prepare('SELECT * FROM api_keys WHERE token_prefix = ? AND revoked_at IS NULL').get(token.slice(0, 12));
-    if (!row || !safeEqual(row.key_hash, sha256hex(token))) return null;
-    if (row.expires_at && row.expires_at < now()) return null;
+    let row;
+    if (token.startsWith('fsa_') && token.length >= 16) {
+      row = this.db.prepare("SELECT * FROM api_keys WHERE token_prefix = ? AND kind = 'agent_token' AND revoked_at IS NULL").get(token.slice(0, 12));
+      if (row && !safeEqual(row.key_hash, sha256hex(token))) row = null;
+    } else if (token.startsWith('fso_')) {
+      // OAuth access token: opaque, stored hashed, one indexed lookup; the grant row carries the scope.
+      row = this.db.prepare(
+        "SELECT k.* FROM oauth_tokens t JOIN api_keys k ON k.id = t.grant_id WHERE t.token_hash = ? AND t.kind = 'access' AND t.expires_at > ? AND k.revoked_at IS NULL",
+      ).get(sha256hex(token), now());
+    }
+    if (!row || (row.expires_at && row.expires_at < now())) return null;
     const granter = this.activeUser(row.user_id); // live constraint: removed member => credential dies
     if (!granter) return null;
     let scope = null;
     try { scope = normaliseScope(JSON.parse(row.scope_json)); } catch { /* fail closed */ }
     if (!scope) return null;
+    this.db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(now(), row.id);
     return {
       type: row.kind === 'oauth' ? 'oauth' : 'agent_token', id: row.id, userId: granter.id, user: granter,
       scope, grantedBy: granter.id, expiresAt: row.expires_at, label: row.client_name || row.name, via: 'bearer',
     };
+  }
+
+  /** Revoking a grant or pasted token kills it and every access/refresh token issued under it. */
+  revokeKey(id) {
+    this.db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ? AND revoked_at IS NULL').run(now(), id);
+    this.db.prepare('DELETE FROM oauth_tokens WHERE grant_id = ?').run(id);
   }
 }
