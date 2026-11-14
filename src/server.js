@@ -57,7 +57,7 @@ export function createApp(overrides = {}) {
   const handleSpace = createSpaceHandler({ store, auth, config, clientIp, throttle: { hit: attempt, clear: (k) => attempts.delete(k) } });
   const origin = (req) => oauth.issuer(req);
   const pubLink = (req, space, g) => ({
-    id: g.id, label: g.name, url: `${origin(req)}/s/${space.slug}/?key=${g.raw_token}`, password: !!g.secret_hash,
+    id: g.id, label: g.name, url: g.key ? `${origin(req)}/s/${space.slug}/?key=${g.key}` : null, hint: g.token_hint, password: !!g.secret_hash,
     expires_at: g.expires_at, max_uses: g.max_uses, uses: g.uses_count, revoked_at: g.revoked_at, disabled_at: g.disabled_at,
     active: store.linkLive(space, g), view_count: g.view_count, first_viewed_at: g.first_viewed_at, last_viewed_at: g.last_viewed_at, created_at: g.created_at,
   });
@@ -184,7 +184,8 @@ export function createApp(overrides = {}) {
           if (!seg[3] && m === 'GET') return { status: 200, body: { links: store.links(space).map((g) => pubLink(req, space, g)) } };
           if (!seg[3] && m === 'POST') {
             const g = await store.createLink(cred, space, { label: body.label, expires_at: body.expires_at, password: body.password, max_uses: body.max_uses });
-            return { status: 201, body: { link: pubLink(req, store.spaceById(space.id), g) }, next };
+            const link = pubLink(req, store.spaceById(space.id), g);
+            return { status: 201, body: { link }, shownOnce: { title: 'New share link', value: link.url, back: next } };
           }
           if (seg[3] && seg[4] === 'revoke' && m === 'POST') return { status: 200, body: { link: pubLink(req, space, store.revokeLink(cred, space, seg[3])) }, next };
           throw httpErr(404, 'Not found');
@@ -382,6 +383,7 @@ export function createApp(overrides = {}) {
       if (!url.pathname.startsWith('/api/')) throw httpErr(404, 'Not found');
       const r = await api(req, res, url, cred, body);
       if (isForm) {
+        if (r.shownOnce) return html(res, 201, ui.shownOnce(cred, r.shownOnce));
         if (r.minted) return html(res, 201, ui.accessPage(cred, [], store.listSpaces(), r.minted));
         if (r.invite) return html(res, 201, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), 1, r.body.invite));
         return redirect(res, safeNext(r.next));

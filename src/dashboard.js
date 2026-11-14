@@ -77,7 +77,7 @@ ${created ? `<section class="card ok"><p>Invite link (shown once, valid 7 days):
 
 function sharing(cred, space, links) {
   const status = (l) => (l.revoked_at ? 'revoked' : l.disabled_at ? 'paused' : l.active ? 'active' : 'expired');
-  const rows = links.map((l) => `<tr><td>${esc(l.label)}${l.password ? ' <span class="badge">password</span>' : ''}<br><input readonly class="wide" value="${esc(l.url)}" aria-label="Link for ${esc(l.label)}"></td>
+  const rows = links.map((l) => `<tr><td>${esc(l.label)}${l.password ? ' <span class="badge">password</span>' : ''}<br><small><code>…${esc(l.hint)}</code></small></td>
 <td>${status(l)}<br><small>${l.expires_at ? `until ${fmtTime(l.expires_at)}` : 'no expiry'}</small></td><td>${l.uses}${l.max_uses != null ? ` / ${l.max_uses}` : ''}</td>
 <td>${l.view_count}<br><small>${l.last_viewed_at ? `last ${fmtTime(l.last_viewed_at)}` : 'not opened yet'}</small></td>
 <td>${l.revoked_at ? '' : `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/revoke" class="inline">${hidden(cred)}<button class="link">Revoke</button></form>`}</td></tr>`).join('');
@@ -140,6 +140,8 @@ ${list || '<p>Nothing connected yet.</p>'}
 <section class="card"><h2>New agent token</h2><p><small>For agents that take a pasted <code>Authorization: Bearer</code> token instead of signing in.</small></p>
 <form method="post" action="/api/tokens">${hidden(cred)}<input type="hidden" name="_next" value="/access"><label>Label (shown in history)<input name="name" required></label>${scopeFields(spaces)}<button>Create token</button></form></section>`);
 }
+
+export const shownOnce = (cred, { title, value, back }) => layout(title, cred, `<h1>${esc(title)}</h1><section class="card ok"><p>Copy it now; it is shown once.</p><input readonly class="wide" value="${esc(value)}"></section><p><a href="${esc(back)}">Back</a></p>`);
 
 export const notFoundPage = (cred) => layout('Not found', cred, '<h1>Not found</h1><p><a href="/">Back to spaces</a></p>');
 

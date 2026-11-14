@@ -29,7 +29,7 @@ export const TOOLS = [
   { name: 'rollback', description: 'Make an earlier version live again (as a new version).', inputSchema: obj({ ...slugArg, version: { type: 'integer' } }) },
   {
     name: 'create_share_link',
-    description: 'Create a share link for a client and return its URL. A team-only space switches to "Anyone with the link". Optional expiry (ISO date), password and max uses.',
+    description: 'Create a share link for a client and return its URL (shown only this once). A team-only space switches to "Anyone with the link". Optional expiry (ISO date), password and max uses.',
     inputSchema: obj({ ...slugArg, label: { type: 'string' }, expires_at: { type: 'string' }, password: { type: 'string' }, max_uses: { type: 'integer' } }, ['slug']),
   },
   { name: 'revoke_share_link', description: 'Revoke a share link; anyone holding it loses access at once.', inputSchema: obj({ ...slugArg, id: { type: 'string', description: 'Link id from create_share_link' } }) },
@@ -61,7 +61,7 @@ export function createMcp({ store, db }) {
   const pubSpace = (s) => ({ slug: s.slug, name: s.name, privacy: s.privacy, url: `/s/${s.slug}/`, live_version: s.live_number ?? null });
   const pubVersion = (v) => ({ number: v.number, message: v.message, author: v.author_name, source: v.source, files: v.total_files, bytes: v.total_bytes, created_at: v.created_at });
 
-  const pubLink = (origin, s, g) => ({ id: g.id, label: g.name, url: `${origin}/s/${s.slug}/?key=${g.raw_token}`, password: !!g.secret_hash, expires_at: g.expires_at, max_uses: g.max_uses, revoked_at: g.revoked_at });
+  const pubLink = (origin, s, g) => ({ id: g.id, label: g.name, url: g.key ? `${origin}/s/${s.slug}/?key=${g.key}` : undefined, password: !!g.secret_hash, expires_at: g.expires_at, max_uses: g.max_uses, revoked_at: g.revoked_at });
 
   const tools = {
     list_spaces: (cred) => ({ spaces: store.listSpaces(cred.scope.spaces).map(pubSpace) }),

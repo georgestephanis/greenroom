@@ -2,8 +2,9 @@
 // grants, api_keys) keep homefast's column names and types; freespace-only data lives in NEW
 // columns/tables so a later homefast import is an ordinary migration (issue #214 section 8).
 import { DatabaseSync } from 'node:sqlite';
+import { sha256hex } from './util.js';
 
-const MIGRATIONS = [
+export const MIGRATIONS = [
   `
   CREATE TABLE spaces (
     id TEXT PRIMARY KEY,
@@ -191,6 +192,13 @@ const MIGRATIONS = [
   ALTER TABLE grants ADD COLUMN last_viewed_at TEXT;
   CREATE INDEX idx_grants_token ON grants(raw_token);
   `,
+  // Share keys are stored as sha256 (like api_keys and oauth_tokens), so the URL is shown once at
+  // creation. raw_token stays in the schema for homefast compatibility but is left NULL.
+  (db) => {
+    db.exec('ALTER TABLE grants ADD COLUMN token_hash TEXT; CREATE UNIQUE INDEX idx_grants_token_hash ON grants(token_hash);');
+    const set = db.prepare('UPDATE grants SET token_hash = ?, raw_token = NULL WHERE id = ?');
+    for (const g of db.prepare('SELECT id, raw_token FROM grants WHERE raw_token IS NOT NULL').all()) set.run(sha256hex(g.raw_token), g.id);
+  },
 ];
 
 export function openDb(file) {
@@ -200,7 +208,7 @@ export function openDb(file) {
   for (let i = v; i < MIGRATIONS.length; i++) {
     db.exec('BEGIN');
     try {
-      db.exec(MIGRATIONS[i]);
+      if (typeof MIGRATIONS[i] === 'function') MIGRATIONS[i](db); else db.exec(MIGRATIONS[i]);
       db.exec(`PRAGMA user_version = ${i + 1}`);
       db.exec('COMMIT');
     } catch (e) {

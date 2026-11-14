@@ -2,7 +2,7 @@
 // "file" (issue #214 section 5). Versions are immutable; "live" is a pointer.
 import { tx } from './db.js';
 import { httpErr, authorName, authorId, hashPassword } from './auth.js';
-import { newId, now, randomToken, SLUG_RE, slugify, cleanPath, contentType } from './util.js';
+import { newId, now, randomToken, sha256hex, SLUG_RE, slugify, cleanPath, contentType } from './util.js';
 import { parseRedirectsFile, parseHeadersFile } from './routing.js';
 
 const META_FILES = 256 * 1024;
@@ -88,7 +88,7 @@ export class Store {
     return this.db.prepare(`SELECT * FROM grants WHERE id = ? AND space_id = ? AND kind IN ${LINK_KINDS}`).get(String(id), space.id);
   }
   linkByKey(space, key) {
-    return this.db.prepare(`SELECT * FROM grants WHERE raw_token = ? AND space_id = ? AND kind IN ${LINK_KINDS}`).get(String(key), space.id);
+    return this.db.prepare(`SELECT * FROM grants WHERE token_hash = ? AND space_id = ? AND kind IN ${LINK_KINDS}`).get(sha256hex(String(key)), space.id);
   }
   /** Can this link open the space right now? Checked on every request, so revoke and expiry are immediate. */
   linkLive(space, g) {
@@ -113,16 +113,15 @@ export class Store {
     if (password && (String(password).length < 8 || String(password).length > 1024)) throw httpErr(400, 'Password must be 8 to 1024 characters');
     const hash = password ? await hashPassword(String(password)) : null;
     const id = newId('grt'), key = 'sfl_' + randomToken(24), t = now();
-    // ponytail: the raw key is stored (as homefast does) so the dashboard can show the URL again.
     // No await from here on, so nothing interleaves; re-read the space, since hashing awaited.
     const cur = this.spaceById(space.id);
-    this.db.prepare(`INSERT INTO grants (id,space_id,kind,name,secret_hash,raw_token,expires_at,max_uses,created_at,updated_at,token_hint)
-      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, space.id, hash ? 'password' : 'share_link', name, hash, key, exp, max, t, t, key.slice(-4));
+    this.db.prepare(`INSERT INTO grants (id,space_id,kind,name,secret_hash,token_hash,expires_at,max_uses,created_at,updated_at,token_hint)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, space.id, hash ? 'password' : 'share_link', name, hash, sha256hex(key), exp, max, t, t, key.slice(-4));
     // Creating a link switches a team space to 'link' (agents may do this; Public stays a person's call).
     if (cur.privacy === 'team') this.updateSpace(cred, cur, { privacy: 'link' });
     else if (cur.privacy !== 'link') this.db.prepare('UPDATE grants SET disabled_at = ? WHERE id = ?').run(t, id);
     this.log(cred, 'link.created', space.id, { name, expires_at: exp, max_uses: max, password: !!hash }, { type: 'grant', id });
-    return this.link(space, id);
+    return { ...this.link(space, id), key }; // the key is only ever returned here; only its hash is stored
   }
 
   revokeLink(cred, space, id) {

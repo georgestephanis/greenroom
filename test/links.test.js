@@ -2,7 +2,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot, client, setupAdmin } from './helpers.js';
+import fs from 'node:fs';
+import os from 'node:os';
+import nodePath from 'node:path';
+import { DatabaseSync } from 'node:sqlite';
 import { viewerCookieName, SPACE_CSP } from '../src/security.js';
+import { MIGRATIONS, openDb } from '../src/db.js';
+import { sha256hex } from '../src/util.js';
 
 const DOC = { 'sec-fetch-dest': 'document' };
 const files = { files: [{ path: 'index.html', content: '<h1>hi</h1>' }, { path: 'a.css', content: 'x{}' }] };
@@ -188,7 +194,7 @@ test('branding shows on the password, 404 and expired pages; bad values are refu
   assert.match(await (await admin.fetch('/instance')).text(), /value="Acme &lt;Studio&gt;"/);
   const sp = await (await admin.fetch('/spaces/alpha')).text();
   assert.match(sp, /id="sharing"/);
-  assert.match(sp, /\/s\/alpha\/\?key=sfl_/);
+  assert.doesNotMatch(sp, /sfl_/, 'the URL is shown only when the link is created');
   assert.match(sp, /<option value="link" selected>/);
   for (const p of pages) {
     const h = await p.text();
@@ -196,4 +202,33 @@ test('branding shows on the password, 404 and expired pages; bad values are refu
     assert.match(h, /src="https:\/\/acme\.example\/logo\.png"/);
     assert.match(h, /#ff0066/);
   }
+});
+
+test('share keys are stored as sha256; the URL is shown once, and the dashboard form shows it once too', async (x) => {
+  const { t, admin, link } = await world(x);
+  const l = await link('alpha');
+  const key = new URL(l.url).searchParams.get('key');
+  const row = t.db.prepare('SELECT raw_token, token_hash, token_hint FROM grants WHERE id = ?').get(l.id);
+  assert.deepEqual({ ...row }, { raw_token: null, token_hash: sha256hex(key), token_hint: key.slice(-4) });
+  const [listed] = (await (await admin.fetch('/api/spaces/alpha/links')).json()).links;
+  assert.equal(listed.url, null);
+  assert.equal(listed.hint, key.slice(-4));
+  const form = await admin.fetch('/api/spaces/alpha/links', { method: 'POST', body: new URLSearchParams({ _csrf: admin.csrf, label: 'Form' }).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  assert.equal(form.status, 201);
+  assert.match(await form.text(), /shown once.*value="https?:\/\/[^"]+\/s\/alpha\/\?key=sfl_/s);
+});
+
+test('migration 4 hashes keys stored in plaintext by migration 3', () => {
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'freespace-mig-'));
+  const file = nodePath.join(dir, 'db.sqlite');
+  try {
+    const old = new DatabaseSync(file);
+    for (const m of MIGRATIONS.slice(0, 3)) old.exec(m);
+    old.exec("PRAGMA user_version = 3; INSERT INTO spaces (id,slug,name,owner_id,created_at,updated_at) VALUES ('spc_1','a','A','u','t','t');"
+      + "INSERT INTO grants (id,space_id,kind,name,raw_token,created_at) VALUES ('grt_1','spc_1','share_link','L','sfl_old','t');");
+    old.close();
+    const db = openDb(file);
+    assert.deepEqual({ ...db.prepare('SELECT raw_token, token_hash FROM grants').get() }, { raw_token: null, token_hash: sha256hex('sfl_old') });
+    db.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
