@@ -2,6 +2,11 @@ export const ALLOWED_STATUS_CODES = new Set([200, 301, 302, 303, 307, 308, 404])
 
 // Rule 2 (issue #214 section 4): tenant _headers may never set these.
 export const FORBIDDEN_HEADER_NAMES = new Set([
+  // act on the whole host, not just this space:
+  'strict-transport-security',
+  'clear-site-data',
+  'set-login',
+  'permissions-policy',
   'content-security-policy',
   'content-security-policy-report-only',
   'service-worker-allowed',
