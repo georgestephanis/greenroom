@@ -135,7 +135,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
     }
     const { kept } = filterTenantHeaders(r.headers ?? {});
     for (const [k, v] of Object.entries(kept)) res.setHeader(k, v);
-    const cookies = rewriteSetCookie(r.cookies);
+    const cookies = rewriteSetCookie(r.cookies, space);
     if (cookies.length) res.setHeader('Set-Cookie', cookies);
     applySpaceHeaders(res, { noindex: !!space.noindex });
     const out = r.json !== undefined ? JSON.stringify(r.json) : (r.body ?? '');

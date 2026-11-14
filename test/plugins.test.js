@@ -80,6 +80,22 @@ test('loader: a plugin sees a narrow ctx, never core tables or credentials', asy
   assert.equal(r.status, 401, 'token routes need the doc token');
 });
 
+test('loader: cookies a plugin route sets are renamed and scoped to the space (rule 5)', async (x) => {
+  const jar = definePlugin({
+    name: 'jar', register(ctx) {
+      ctx.serve({ path: '/_fs/jar', auth: 'none', handler: () => ({ json: {}, cookies: ['pref=dark; Path=/; Domain=evil.test; SameSite=Lax; Max-Age=60', 'fs_session=stolen', '__Host-x=1'], headers: { 'set-cookie': 'raw=1' } }) });
+    },
+  });
+  const { t, admin } = await world(x, { enable: [], on: [], overrides: { plugins: [jar] } });
+  await admin.post('/api/admin/plugins/jar', { enabled: true });
+  await admin.post('/api/spaces/demo/plugins/jar', { enabled: true }, 'PUT');
+  await admin.post('/api/spaces/demo', { privacy: 'public' }, 'PATCH');
+  const r = await fetch(t.base + '/s/demo/_fs/jar');
+  assert.equal(r.status, 200);
+  const sp = t.store.space('demo');
+  assert.deepEqual(r.headers.getSetCookie(), [`fsp_${sp.id.slice(4, 12)}_pref=dark; Path=/s/demo/; Secure; SameSite=None; Max-Age=60`]);
+});
+
 test('loader: a space that lists a plugin this instance lacks keeps its data and says so', async (x) => {
   const { t, admin } = await world(x, { enable: [], on: [] });
   t.db.prepare(`UPDATE spaces SET plugins_json = '["ghost"]'`).run();
