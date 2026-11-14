@@ -23,16 +23,18 @@ export class CAS {
   size(sha) { try { return fs.statSync(this.path(sha)).size; } catch { return null; } }
   read(sha) { return fsp.readFile(this.path(sha)); }
   stream(sha, opts) { return fs.createReadStream(this.path(sha), opts); }
+  /** Refresh mtime so GC's grace period protects a blob a new version is about to reference. */
+  touch(sha) { try { const t = new Date(); fs.utimesSync(this.path(sha), t, t); return true; } catch { return false; } }
 
   async #commit(tmp, sha) {
     const final = this.path(sha);
-    if (fs.existsSync(final)) return fsp.unlink(tmp);
+    if (this.touch(sha)) return fsp.unlink(tmp);
     await fsp.mkdir(path.dirname(final), { recursive: true });
     await fsp.rename(tmp, final);
   }
   async storeBuffer(buf) {
     const sha = crypto.createHash('sha256').update(buf).digest('hex');
-    if (!this.has(sha)) {
+    if (!this.touch(sha)) {
       const tmp = path.join(this.tmpDir, `buf-${sha}-${crypto.randomUUID()}`);
       await fsp.writeFile(tmp, buf);
       await this.#commit(tmp, sha);
@@ -59,8 +61,9 @@ export class CAS {
     await this.#commit(tmp, sha);
     return { sha256: sha, size };
   }
-  /** Delete blobs not in `active` and older than the grace period; sweep stale temp files. */
-  async gc(active, graceMs = 3600e3) {
+  /** Delete blobs not in `active` and older than the grace period; sweep stale temp files.
+   *  `stillUsed(sha)` re-checks each candidate just before unlinking, since `active` is a snapshot. */
+  async gc(active, graceMs = 3600e3, stillUsed = () => false) {
     const cutoff = Date.now() - graceMs;
     let removed = 0, freed = 0;
     for (const shard of await fsp.readdir(this.baseDir).catch(() => [])) {
@@ -69,7 +72,7 @@ export class CAS {
         if (!HASH.test(f) || active.has(f)) continue;
         const p = path.join(this.baseDir, shard, f);
         const st = await fsp.stat(p).catch(() => null);
-        if (st && st.mtimeMs < cutoff) { await fsp.unlink(p); removed++; freed += st.size; }
+        if (st && st.mtimeMs < cutoff && !stillUsed(f)) { await fsp.unlink(p); removed++; freed += st.size; }
       }
     }
     for (const f of await fsp.readdir(this.tmpDir).catch(() => [])) {

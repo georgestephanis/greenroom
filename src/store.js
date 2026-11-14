@@ -114,7 +114,7 @@ export class Store {
       let stored;
       if (typeof f.content === 'string') stored = await this.cas.storeBuffer(Buffer.from(f.content, 'utf8'));
       else if (typeof f.base64 === 'string') stored = await this.cas.storeBuffer(Buffer.from(f.base64, 'base64'));
-      else if (typeof f.sha256 === 'string' && this.cas.has(f.sha256)) stored = { sha256: f.sha256.toLowerCase(), size: this.cas.size(f.sha256) };
+      else if (typeof f.sha256 === 'string' && this.cas.touch(f.sha256)) stored = { sha256: f.sha256.toLowerCase(), size: this.cas.size(f.sha256) };
       else throw httpErr(400, `File needs content, base64 or a known sha256: ${f.path}`);
       if (stored.size > this.config.maxFileBytes) throw httpErr(413, `File too large: ${p}`);
       entries.set(p, { path: p, sha256: stored.sha256, size: stored.size, content_type: contentType(p) });
@@ -220,7 +220,8 @@ export class Store {
     this.db.prepare('DELETE FROM invites WHERE expires_at < ?').run(t);
     const active = new Set(this.db.prepare('SELECT DISTINCT sha256 FROM manifest_files').all().map((r) => r.sha256));
     // Fire and forget: the result only matters to the dashboard button, which awaits `gcPromise`.
-    this.gcPromise = this.cas.gc(active).catch(() => ({ removed: 0, freed: 0 }));
+    const used = this.db.prepare('SELECT 1 FROM manifest_files WHERE sha256 = ? LIMIT 1');
+    this.gcPromise = this.cas.gc(active, undefined, (sha) => !!used.get(sha)).catch(() => ({ removed: 0, freed: 0 }));
     return this.gcPromise;
   }
 

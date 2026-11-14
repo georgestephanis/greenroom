@@ -1,6 +1,10 @@
 // Regression tests for the #215 review findings.
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { CAS } from '../src/cas.js';
 import { compilePattern, matchRule, parseHeadersFile } from '../src/routing.js';
 
 test('redirect patterns: placeholders must be whole segments (no ReDoS)', () => {
@@ -18,4 +22,19 @@ test('_headers cannot set host-scoped headers', () => {
   const { blocks, diagnostics } = parseHeadersFile('/*\n  Strict-Transport-Security: max-age=0\n  Clear-Site-Data: "*"\n  Set-Login: logged-out\n  Permissions-Policy: camera=*\n  X-Ok: 1\n');
   assert.deepEqual(blocks[0].headers, [{ key: 'X-Ok', value: '1' }]);
   assert.equal(diagnostics.length, 4);
+});
+
+test('GC keeps a blob that a new write or a fresh version reuses', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-cas-'));
+  const cas = new CAS(path.join(dir, 'b'), path.join(dir, 't'));
+  const old = new Date(Date.now() - 2 * 3600e3);
+  const { sha256: a } = await cas.storeBuffer(Buffer.from('a'));
+  const { sha256: b } = await cas.storeBuffer(Buffer.from('b'));
+  for (const s of [a, b]) fs.utimesSync(cas.path(s), old, old);
+  await cas.storeBuffer(Buffer.from('a')); // rewrite of an existing blob refreshes it
+  await cas.gc(new Set(), 3600e3, (s) => s === b); // b got referenced after the snapshot
+  assert.ok(cas.has(a) && cas.has(b));
+  await cas.gc(new Set(), 3600e3);
+  assert.ok(cas.has(a) && !cas.has(b));
+  fs.rmSync(dir, { recursive: true, force: true });
 });
