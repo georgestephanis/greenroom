@@ -26,11 +26,27 @@ const MAGIC = 'SQLite format 3\0';
 const dbFile = (dir) => path.join(dir, 'app.sqlite');
 const quote = (id) => `"${id.replace(/"/g, '""')}"`;
 const lit = (s) => `'${s.replace(/'/g, "''")}'`;
-const plain = (row) => ({ ...row }); // node:sqlite rows have a null prototype
+const MAX_VALUE = 8 * 1024 * 1024; // SQLITE_LIMIT_LENGTH: no string or blob above this, so zeroblob(1e9) fails instead of filling RAM
+const MAX_RESPONSE = 16 * 1024 * 1024; // JSON bytes per response; the rest is cut and `truncated` is set
+// node:sqlite rows have a null prototype; BLOBs come back as Uint8Array, sent as { base64 }.
+const plain = (row) => Object.fromEntries(Object.entries(row).map(([k, v]) => [k, v instanceof Uint8Array ? { base64: Buffer.from(v).toString('base64') } : v]));
+/** Rows from a statement, capped by count and by JSON size. */
+function collect(stmt, args, max = MAX_ROWS) {
+  const rows = [];
+  let bytes = 0;
+  for (const r of stmt.iterate(...args)) {
+    const row = plain(r);
+    bytes += JSON.stringify(row).length;
+    if (bytes > MAX_RESPONSE) return { rows, truncated: true };
+    rows.push(row);
+    if (rows.length >= max) return { rows, truncated: true };
+  }
+  return { rows, truncated: false };
+}
 
 function open(dir, { readOnly = false, create = false } = {}) {
   if (!create && !fs.existsSync(dbFile(dir))) return null;
-  const db = new DatabaseSync(dbFile(dir), { readOnly });
+  const db = new DatabaseSync(dbFile(dir), { readOnly, limits: { length: MAX_VALUE } }); // `limits` needs Node 24.x; collect() still caps the response without it
   if (!readOnly) db.exec(`PRAGMA max_page_count = ${MAX_PAGES}; PRAGMA foreign_keys = ON`);
   return db;
 }
@@ -99,7 +115,7 @@ function structured(dir, policy, b) {
         });
         const limit = Math.min(Math.max(Math.trunc(Number(b.limit ?? 100)) || 0, 1), MAX_ROWS);
         const offset = Math.max(Math.trunc(Number(b.offset ?? 0)) || 0, 0);
-        return { rows: db.prepare(`SELECT * FROM ${t}${w.sql}${order.length ? ` ORDER BY ${order.join(', ')}` : ''} LIMIT ${limit} OFFSET ${offset}`).all(...w.args).map(plain) };
+        return collect(db.prepare(`SELECT * FROM ${t}${w.sql}${order.length ? ` ORDER BY ${order.join(', ')}` : ''} LIMIT ${limit} OFFSET ${offset}`), w.args, Infinity);
       }
       let r;
       if (b.op === 'insert') {
@@ -167,18 +183,14 @@ export default definePlugin({
     const slugArg = { slug: { type: 'string', description: 'Space slug' } };
     ctx.mcp.tool('db_schema', { description: 'Tables and columns of the space’s SQLite database, with each table’s browser access policy.', inputSchema: { type: 'object', properties: {}, required: [] }, perm: 'db' },
       ({ dir, settings }) => withDb(dir, { readOnly: true }, (db) => ({ tables: db ? tables(db).map((t) => ({ name: t, access: settings.tables[t] ?? 'off', columns: columns(db, t) })) : [] })));
-    ctx.mcp.tool('db_query', { description: `Run one read-only SQL statement (SELECT, WITH or EXPLAIN) with ? parameters. Up to ${MAX_ROWS} rows.`, inputSchema: { type: 'object', properties: { sql: { type: 'string' }, params: { type: 'array' } }, required: ['sql'] }, perm: 'db' },
+    ctx.mcp.tool('db_query', { description: `Run one read-only SQL statement (SELECT, WITH or EXPLAIN) with ? parameters. Up to ${MAX_ROWS} rows; BLOBs come back as { base64 }.`, inputSchema: { type: 'object', properties: { sql: { type: 'string' }, params: { type: 'array' } }, required: ['sql'] }, perm: 'db' },
       ({ args, dir }) => withDb(dir, { readOnly: true }, (db) => {
         if (!db) throw httpErr(404, 'This space has no database yet');
         guard(args.sql, ['SELECT', 'WITH', 'EXPLAIN']);
-        return wrap(() => {
-          const rows = [];
-          for (const r of db.prepare(args.sql).iterate(...params(args.params))) { // ponytail: row cap only; a pathological query can still run long
-            rows.push(plain(r));
-            if (rows.length >= MAX_ROWS) break;
-          }
-          return { rows, truncated: rows.length >= MAX_ROWS };
-        });
+        // ponytail: rows and bytes are capped, time is not. node:sqlite has no progress handler, so a runaway
+        // recursive CTE that yields no rows holds the event loop until it ends. Ceiling: one db-scoped token
+        // can stall the box; upgrade path is running db_query in a worker_thread and terminate() on a deadline.
+        return wrap(() => collect(db.prepare(args.sql), params(args.params)));
       }));
     ctx.mcp.tool('db_exec', { description: 'Run SQL that changes the database (INSERT, UPDATE, DELETE, REPLACE, CREATE, DROP, ALTER). One statement per string; pass an array to run several in one transaction. Creates the database on first use.', inputSchema: { type: 'object', properties: { sql: { oneOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }] }, params: { type: 'array' } }, required: ['sql'] }, perm: 'db' },
       ({ args, dir }) => {

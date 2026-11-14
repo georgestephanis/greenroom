@@ -207,6 +207,21 @@ test('sqlite: raw SQL over MCP needs the db scope, stays in this space file, and
   assert.ok(core.status >= 400 || core.body.error || core.body.result?.isError);
 });
 
+test('sqlite: results are capped in size and BLOBs come back as base64', async (x) => {
+  const { t, admin } = await world(x);
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: ['CREATE TABLE b (id INTEGER PRIMARY KEY, v BLOB)', "INSERT INTO b (v) VALUES (x'00ff10')"] });
+  assert.deepEqual(sc(await mcp(t, tok, 'db_query', { slug: 'demo', sql: 'SELECT v FROM b' })).rows, [{ v: { base64: 'AP8Q' } }]);
+  await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { tables: { b: 'read' } } }, 'PUT');
+  assert.deepEqual((await (await api(t, await docToken(admin), { op: 'select', table: 'b' })).json()).rows, [{ id: 1, v: { base64: 'AP8Q' } }]);
+  const huge = await mcp(t, tok, 'db_query', { slug: 'demo', sql: 'SELECT zeroblob(300000000)' });
+  assert.ok(huge.status >= 400 || huge.body.error || huge.body.result?.isError, 'values above 8 MB fail');
+  // many mid-size values: the response stops at 16 MB and says so
+  const big = sc(await mcp(t, tok, 'db_query', { slug: 'demo', sql: 'WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n LIMIT 40) SELECT zeroblob(1000000) AS z FROM n' }));
+  assert.equal(big.truncated, true);
+  assert.ok(big.rows.length < 40);
+});
+
 test('sqlite: a plugin tool from a space without the plugin is not found', async (x) => {
   const { t, admin } = await world(x, { on: [] });
   const tok = await token(admin, ['publish', 'db', 'read']);
