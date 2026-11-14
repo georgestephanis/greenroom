@@ -49,18 +49,24 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
     const v = viewerFor(space, cookies);
     if (v?.kind === 'link' && v.subject === g.id) return send(res, 303, '', { Location: clean, 'Cache-Control': 'no-store' }); // already in: don't spend another use
     if (g.max_uses != null && g.uses_count >= g.max_uses) return gone();
-    if (g.secret_hash) {
-      const form = (err) => page(brand, 'Password required', err || 'Enter the password you were given to open this page.',
-        '<form method="post"><input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password"><button>Open</button></form>');
+    // Link previews (Slack, Outlook Safe Links) fetch with GET or HEAD. HEAD never spends; a link with a
+    // password or max uses spends only from a POST, so an unfurler can't burn a one-use link.
+    if (req.method === 'HEAD') return send(res, 200, '', HTML);
+    if (g.secret_hash || g.max_uses != null) {
+      const form = (err) => page(brand, g.secret_hash ? 'Password required' : 'Open shared page',
+        err || (g.secret_hash ? 'Enter the password you were given to open this page.' : 'Someone shared a page with you.'),
+        `<form method="post">${g.secret_hash ? '<input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password">' : ''}<button>Open</button></form>`);
       if (req.method !== 'POST') return send(res, 200, form(), HTML);
-      // Per link+IP (clientIp honours trustProxy), counted before the scrypt await.
-      const tkey = `link|${g.id}|${clientIp(req)}`;
-      if (throttle.hit(tkey)) return send(res, 429, form('Too many attempts. Try again in a few minutes.'), { ...HTML, 'Retry-After': '900' });
-      const pw = await formPassword(req);
-      if (!pw || !(await verifyPassword(pw, g.secret_hash))) return send(res, 401, form('That password is not right.'), HTML);
-      throttle.clear(tkey);
-      g = store.link(space, g.id); // re-check after the await: it may have been revoked meanwhile
-      if (!store.linkLive(space, g)) return gone();
+      if (g.secret_hash) {
+        // Per link+IP (clientIp honours trustProxy), counted before the scrypt await.
+        const tkey = `link|${g.id}|${clientIp(req)}`;
+        if (throttle.hit(tkey)) return send(res, 429, form('Too many attempts. Try again in a few minutes.'), { ...HTML, 'Retry-After': '900' });
+        const pw = await formPassword(req);
+        if (!pw || !(await verifyPassword(pw, g.secret_hash))) return send(res, 401, form('That password is not right.'), HTML);
+        throttle.clear(tkey);
+        g = store.link(space, g.id); // re-check after the await: it may have been revoked meanwhile
+        if (!store.linkLive(space, g)) return gone();
+      }
     }
     if (!store.spendLink(g)) return gone();
     const ttl = Math.min(config.sessionDays * 864e5, g.expires_at ? Date.parse(g.expires_at) - Date.now() : Infinity);

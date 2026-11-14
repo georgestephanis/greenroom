@@ -77,20 +77,34 @@ test('revocation and expiry take effect on the next request', async (x) => {
   assert.equal((await admin.post('/api/spaces/alpha/links', { expires_at: '2001-01-01' })).status, 400);
 });
 
-test('max uses are spent per cookie issued, not per view', async (x) => {
+test('max uses are spent per cookie issued, not per view; previews and HEAD spend nothing', async (x) => {
   const { t, admin, link } = await world(x);
   const l = await link('alpha', { max_uses: 2 });
   const a = client(t.base), b = client(t.base);
-  assert.equal((await a.fetch(path(l.url))).status, 303);
-  assert.equal((await a.fetch(path(l.url))).status, 303, 'revisiting with the key while holding the cookie is free');
+  // An unfurler (GET or HEAD, no cookie kept) sees the Open page and spends nothing.
+  assert.equal((await client(t.base).fetch(path(l.url), { method: 'HEAD' })).status, 200);
+  const preview = await client(t.base).fetch(path(l.url), { headers: DOC });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.headers.get('set-cookie'), null);
+  assert.match(await preview.text(), /<form method="post">.*<button>Open<\/button>/);
+  const open = (c) => c.fetch(path(l.url), { method: 'POST' });
+  assert.equal((await open(a)).status, 303);
+  assert.equal((await open(a)).status, 303, 'revisiting with the key while holding the cookie is free');
+  assert.equal((await a.fetch(path(l.url))).status, 303, 'so is a GET once in');
   for (let i = 0; i < 3; i++) assert.equal((await a.fetch('/s/alpha/', { headers: DOC })).status, 200);
-  assert.equal((await b.fetch(path(l.url))).status, 303);
-  assert.equal((await client(t.base).fetch(path(l.url))).status, 410, 'third browser is refused');
+  assert.equal((await open(b)).status, 303);
+  assert.equal((await open(client(t.base))).status, 410, 'third browser is refused');
   assert.equal((await a.fetch('/s/alpha/a.css')).status, 200, 'existing holders keep access');
   const [row] = (await (await admin.fetch('/api/spaces/alpha/links')).json()).links;
   assert.equal(row.uses, 2);
   assert.equal(row.view_count, 3, 'document views counted, subresources not');
   assert.ok(row.first_viewed_at && row.last_viewed_at);
+  // Unlimited links still open straight from GET; HEAD sets no cookie there either.
+  const u = await link('alpha');
+  const head = await client(t.base).fetch(path(u.url), { method: 'HEAD' });
+  assert.equal(head.headers.get('set-cookie'), null);
+  assert.equal((await client(t.base).fetch(path(u.url))).status, 303);
+  assert.equal(t.db.prepare('SELECT uses_count FROM grants WHERE id = ?').get(u.id).uses_count, 1);
 });
 
 test('password links: form, wrong password, brute-force throttle per link and IP', async (x) => {
