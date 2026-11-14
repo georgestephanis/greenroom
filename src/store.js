@@ -70,10 +70,12 @@ export class Store {
     sets.push('updated_at = ?'); vals.push(t);
     tx(this.db, () => {
       this.db.prepare(`UPDATE spaces SET ${sets.join(', ')} WHERE id = ?`).run(...vals, space.id);
-      // Leaving 'link' disables its links; coming back restores them, view counts and all.
-      if (patch.privacy !== undefined && patch.privacy !== space.privacy) {
+      // Leaving 'link' pauses its links; a person switching back restores them, view counts and all.
+      // An agent switching back leaves them paused: re-enabling old links is a person's call.
+      const restore = patch.privacy === 'link' && cred?.type === 'session';
+      if (patch.privacy !== undefined && patch.privacy !== space.privacy && (patch.privacy !== 'link' || restore)) {
         this.db.prepare(`UPDATE grants SET disabled_at = ?, updated_at = ? WHERE space_id = ? AND kind IN ${LINK_KINDS}`)
-          .run(patch.privacy === 'link' ? null : t, t, space.id);
+          .run(restore ? null : t, t, space.id);
       }
     });
     this.log(cred, 'space.updated', space.id, patch, { type: 'space', id: space.id });
@@ -115,13 +117,28 @@ export class Store {
     const id = newId('grt'), key = 'sfl_' + randomToken(24), t = now();
     // No await from here on, so nothing interleaves; re-read the space, since hashing awaited.
     const cur = this.spaceById(space.id);
+    if (cur.privacy === 'public') throw httpErr(409, 'This space is Public, so anyone can already view it. A person can switch it to "Anyone with the link" in the dashboard first.');
     this.db.prepare(`INSERT INTO grants (id,space_id,kind,name,secret_hash,token_hash,expires_at,max_uses,created_at,updated_at,token_hint)
       VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, space.id, hash ? 'password' : 'share_link', name, hash, sha256hex(key), exp, max, t, t, key.slice(-4));
     // Creating a link switches a team space to 'link' (agents may do this; Public stays a person's call).
-    if (cur.privacy === 'team') this.updateSpace(cred, cur, { privacy: 'link' });
-    else if (cur.privacy !== 'link') this.db.prepare('UPDATE grants SET disabled_at = ? WHERE id = ?').run(t, id);
+    // Only the new link is live: links paused earlier stay paused until a person resumes them.
+    const switched = cur.privacy === 'team';
+    if (switched) {
+      this.db.prepare("UPDATE spaces SET privacy = 'link', updated_at = ? WHERE id = ?").run(t, space.id);
+      this.log(cred, 'space.updated', space.id, { privacy: 'link' }, { type: 'space', id: space.id });
+    }
     this.log(cred, 'link.created', space.id, { name, expires_at: exp, max_uses: max, password: !!hash }, { type: 'grant', id });
-    return { ...this.link(space, id), key }; // the key is only ever returned here; only its hash is stored
+    return { ...this.link(space, id), key, switched }; // the key is only ever returned here; only its hash is stored
+  }
+
+  /** A person re-enables one paused link (the space must already be 'link'). */
+  resumeLink(cred, space, id) {
+    const g = this.link(space, id);
+    if (!g) throw httpErr(404, 'No such link');
+    if (space.privacy !== 'link') throw httpErr(409, 'Switch the space to "Anyone with the link" first');
+    this.db.prepare('UPDATE grants SET disabled_at = NULL, updated_at = ? WHERE id = ?').run(now(), g.id);
+    this.log(cred, 'link.resumed', space.id, { name: g.name }, { type: 'grant', id: g.id });
+    return this.link(space, g.id);
   }
 
   revokeLink(cred, space, id) {

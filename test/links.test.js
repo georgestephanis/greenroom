@@ -183,6 +183,25 @@ test('leaving link mode disables links; coming back restores them', async (x) =>
   assert.equal(row.disabled_at, null);
 });
 
+test('creating a link on a team space enables only that link; a person resumes the others', async (x) => {
+  const { t, admin, link, space } = await world(x);
+  const old = await link('alpha');
+  assert.equal((await admin.post('/api/spaces/alpha', { privacy: 'team' }, 'PATCH')).status, 200);
+  const fresh = await link('alpha');
+  assert.equal(space('alpha').privacy, 'link');
+  const v = client(t.base);
+  assert.equal((await v.fetch(path(old.url))).status, 410, 'the paused link stays paused');
+  assert.equal((await client(t.base).fetch(path(fresh.url))).status, 303);
+  assert.match(await (await admin.fetch('/spaces/alpha')).text(), new RegExp(`links/${old.id}/resume`));
+  assert.equal((await admin.post(`/api/spaces/alpha/links/${old.id}/resume`, {})).status, 200);
+  assert.equal((await v.fetch(path(old.url))).status, 303);
+  assert.equal((await admin.post('/api/spaces/beta', { privacy: 'public' }, 'PATCH')).status, 200);
+  const r = await admin.post('/api/spaces/beta/links', {});
+  assert.equal(r.status, 409);
+  assert.match(await r.text(), /Public/);
+  assert.equal(t.db.prepare("SELECT COUNT(*) c FROM grants g JOIN spaces s ON s.id = g.space_id WHERE s.slug = 'beta'").get().c, 0);
+});
+
 test('branding shows on the password, 404 and expired pages; bad values are refused', async (x) => {
   const { t, admin, link } = await world(x);
   assert.equal((await admin.post('/api/admin/branding', { name: 'Acme', logo: 'javascript:alert(1)' })).status, 400);

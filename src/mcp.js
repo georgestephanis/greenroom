@@ -105,7 +105,10 @@ export function createMcp({ store, db }) {
     // Share links need the share scope. There is deliberately no tool that makes a space Public.
     create_share_link: async (cred, a, origin) => {
       const s = space(cred, a.slug, 'share');
-      return { link: pubLink(origin, s, await store.createLink(cred, s, a)) };
+      const g = await store.createLink(cred, s, a);
+      const paused = store.links(s).filter((l) => l.disabled_at && !l.revoked_at).length;
+      const note = g.switched ? `The space was team-only and is now "Anyone with the link". Only this new link is live${paused ? `; ${paused} link(s) paused earlier stay paused until a person resumes them in the dashboard` : ''}.` : undefined;
+      return { link: pubLink(origin, s, g), space_privacy: 'link', note };
     },
     revoke_share_link: (cred, a, origin) => {
       const s = space(cred, a.slug, 'share');

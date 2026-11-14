@@ -52,7 +52,7 @@ ${warnings.length ? `<section class="card warn"><h2>Warnings on the live version
 <input name="message" placeholder="What changed?"><button>Publish zip</button><span class="status"></span></form></section>
 <section class="card"><h2>Who can view</h2><form method="post" action="/api/spaces/${esc(space.slug)}">${hidden(cred)}<input type="hidden" name="_method" value="PATCH"><input type="hidden" name="_next" value="/spaces/${esc(space.slug)}">
 <select name="privacy">${[['team', 'Team only'], ['link', 'Anyone with the link'], ['public', 'Public']].map(([v, l]) => `<option value="${v}"${space.privacy === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
-<button>Save</button></form><small>Team members can always view. Switching away from “Anyone with the link” pauses its links; switching back restores them.</small></section>
+<button>Save</button></form><small>Team members can always view. Switching away from “Anyone with the link” pauses its links; switching back restores them. A link created while the space is team-only switches it to “Anyone with the link”; links paused earlier stay paused until you resume them.</small></section>
 ${links ? sharing(cred, space, links) : ''}
 <section class="card"><h2>History</h2><ol class="history">${hist || '<li>No versions.</li>'}</ol></section>`);
 }
@@ -80,7 +80,7 @@ function sharing(cred, space, links) {
   const rows = links.map((l) => `<tr><td>${esc(l.label)}${l.password ? ' <span class="badge">password</span>' : ''}<br><small><code>…${esc(l.hint)}</code></small></td>
 <td>${status(l)}<br><small>${l.expires_at ? `until ${fmtTime(l.expires_at)}` : 'no expiry'}</small></td><td>${l.uses}${l.max_uses != null ? ` / ${l.max_uses}` : ''}</td>
 <td>${l.view_count}<br><small>${l.last_viewed_at ? `last ${fmtTime(l.last_viewed_at)}` : 'not opened yet'}</small></td>
-<td>${l.revoked_at ? '' : `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/revoke" class="inline">${hidden(cred)}<button class="link">Revoke</button></form>`}</td></tr>`).join('');
+<td>${l.disabled_at && !l.revoked_at && space.privacy === 'link' ? `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/resume" class="inline">${hidden(cred)}<button class="link">Resume</button></form> ` : ''}${l.revoked_at ? '' : `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/revoke" class="inline">${hidden(cred)}<button class="link">Revoke</button></form>`}</td></tr>`).join('');
   return `<section class="card" id="sharing"><h2>Sharing</h2>
 ${links.length ? `<table><thead><tr><th>Link</th><th>Status</th><th>Uses</th><th>Views</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<p>No share links yet. Creating one switches a team-only space to “Anyone with the link”.</p>'}
 <form method="post" action="/api/spaces/${esc(space.slug)}/links">${hidden(cred)}<h3>New link</h3>

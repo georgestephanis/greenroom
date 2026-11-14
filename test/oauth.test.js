@@ -418,6 +418,12 @@ test('share links over MCP need the share scope; an agent can reach link mode bu
     assert.equal((await patch('team')).status, 200);
     assert.equal((await patch('link')).status, 200);
     assert.equal(t.store.space('alpha').privacy, 'link');
+    assert.ok(t.db.prepare('SELECT disabled_at FROM grants WHERE id = ?').get(link.id).disabled_at, 'an agent switching back does not resume links');
+    const again = (await call(t, access_token, 'create_share_link', { slug: 'alpha' })).body.result.structuredContent;
+    assert.equal(again.note, undefined, 'already link: nothing switched');
+    assert.equal((await patch('team')).status, 200);
+    const third = (await call(t, access_token, 'create_share_link', { slug: 'alpha' })).body.result.structuredContent;
+    assert.match(third.note, /now "Anyone with the link"\. Only this new link is live; 2 link\(s\) paused earlier stay paused/);
     const rev = await call(t, access_token, 'revoke_share_link', { slug: 'alpha', id: link.id });
     assert.ok(rev.body.result.structuredContent.link.revoked_at);
     // Out-of-scope space: no link there either.
@@ -428,5 +434,10 @@ test('share links over MCP need the share scope; an agent can reach link mode bu
     assert.equal(missing.body.error.message.replace('no-such', 'beta'), beta.body.error.message);
     const log = t.db.prepare("SELECT actor_kind FROM activity_log WHERE action = 'link.created'").get();
     assert.equal(log.actor_kind, 'oauth');
+    // On a Public space the tool says so instead of making a link that can never work.
+    assert.equal((await ada.post('/api/spaces/alpha', { privacy: 'public' }, 'PATCH')).status, 200);
+    const pub = (await call(t, access_token, 'create_share_link', { slug: 'alpha' })).body.result;
+    assert.ok(pub.isError);
+    assert.match(pub.content[0].text, /Public/);
   } finally { t.close(); }
 });

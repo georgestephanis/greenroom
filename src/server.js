@@ -187,6 +187,7 @@ export function createApp(overrides = {}) {
             const link = pubLink(req, store.spaceById(space.id), g);
             return { status: 201, body: { link }, shownOnce: { title: 'New share link', value: link.url, back: next } };
           }
+          if (seg[3] && seg[4] === 'resume' && m === 'POST') { requireSession(cred); return { status: 200, body: { link: pubLink(req, space, store.resumeLink(cred, space, seg[3])) }, next }; }
           if (seg[3] && seg[4] === 'revoke' && m === 'POST') return { status: 200, body: { link: pubLink(req, space, store.revokeLink(cred, space, seg[3])) }, next };
           throw httpErr(404, 'Not found');
         }
