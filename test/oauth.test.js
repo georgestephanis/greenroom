@@ -251,6 +251,10 @@ test('insufficient_scope names what to ask for, and step-up widens the same gran
     assert.match(pub.www, /error="insufficient_scope", scope="space:alpha read publish"/);
     const other = await call(t, a.access_token, 'get_space', { slug: 'beta' });
     assert.match(other.www, /scope="space:alpha read space:beta"/);
+    // A missing space looks exactly like one outside the grant.
+    const nope = await call(t, a.access_token, 'get_space', { slug: 'nope' });
+    assert.equal(nope.status, other.status);
+    assert.equal(nope.body.error.message.replace('nope', 'beta'), other.body.error.message);
     assert.deepEqual((await call(t, a.access_token, 'list_spaces')).body.result.structuredContent.spaces.map((s) => s.slug), ['alpha']);
 
     await connect(t, ada, { spaces: ['alpha', 'beta'], perms: ['read', 'publish'], scope: 'space:alpha space:beta read publish' });
@@ -263,7 +267,9 @@ test('MCP tools: create_space joins the grant, publish/read/diff/rollback work, 
   const { t, ada } = await world();
   try {
     const { access_token: tok } = await connect(t, ada, { spaces: [], perms: ['read', 'publish'], create: true, scope: 'spaces:create read publish' });
-    assert.equal((await mcp(t, tok, 'initialize', { protocolVersion: '2025-06-18' })).body.result.serverInfo.name, 'freespace');
+    const init = (await mcp(t, tok, 'initialize', { protocolVersion: '1999-01-01' })).body.result;
+    assert.equal(init.serverInfo.name, 'freespace');
+    assert.equal(init.protocolVersion, '2025-06-18', 'answers with a version it supports, not an echo');
     const made = await call(t, tok, 'create_space', { name: 'Gamma' });
     assert.equal(made.body.result.structuredContent.space.slug, 'gamma');
     const r1 = await call(t, tok, 'publish', { slug: 'gamma', files: [{ path: 'index.html', content: '<h1>one</h1>' }], message: 'first' });

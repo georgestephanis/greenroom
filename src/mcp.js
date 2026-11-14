@@ -2,6 +2,7 @@
 // Every tool checks the credential's scope; a missing scope is HTTP 403 insufficient_scope naming
 // what to ask for, so the client can step up through /oauth/authorize.
 import { httpErr, can } from './auth.js';
+import { SLUG_RE } from './util.js';
 
 const PROTOCOL = '2025-06-18';
 const slugArg = { slug: { type: 'string', description: 'Space slug' } };
@@ -38,13 +39,17 @@ function insufficient(cred, need) {
 
 export function createMcp({ store, db }) {
   const inScope = (cred, slug) => cred.scope.spaces === '*' || cred.scope.spaces.includes(slug);
+  // A scoped credential gets the same answer for a space outside its scope and one that doesn't exist,
+  // so it can't probe which slugs are taken.
   function space(cred, slug, perm) {
-    const s = store.space(String(slug || ''));
-    if (!s) throw httpErr(404, 'No such space');
+    slug = String(slug || '');
+    if (!SLUG_RE.test(slug)) throw httpErr(404, 'No such space');
     const need = [];
-    if (!inScope(cred, s.slug)) need.push(`space:${s.slug}`);
+    if (!inScope(cred, slug)) need.push(`space:${slug}`);
     if (perm && !can({ scope: { ...cred.scope, spaces: '*' } }, perm)) need.push(perm);
     if (need.length) throw insufficient(cred, need);
+    const s = store.space(slug);
+    if (!s) throw httpErr(404, 'No such space');
     return s;
   }
   const pubSpace = (s) => ({ slug: s.slug, name: s.name, privacy: s.privacy, url: `/s/${s.slug}/`, live_version: s.live_number ?? null });
@@ -97,8 +102,8 @@ export function createMcp({ store, db }) {
     if (!msg || msg.jsonrpc !== '2.0' || typeof msg.method !== 'string') return { status: 400, body: { jsonrpc: '2.0', id: null, error: { code: -32600, message: 'Invalid request' } } };
     if (msg.id === undefined) return { status: 202 }; // notification
     switch (msg.method) {
-      case 'initialize':
-        return reply({ protocolVersion: msg.params?.protocolVersion || PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'freespace', version: '0.2.0' } });
+      case 'initialize': // ponytail: one supported version; answer with it whatever the client asked for
+        return reply({ protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'freespace', version: '0.2.0' } });
       case 'ping': return reply({});
       case 'tools/list': return reply({ tools: TOOLS });
       case 'tools/call': {
