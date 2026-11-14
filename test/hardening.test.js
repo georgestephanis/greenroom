@@ -60,3 +60,13 @@ test('first-run setup creates one admin, even in parallel', async (x) => {
   assert.deepEqual(codes, [201, 403, 403]);
   assert.equal(t.db.prepare('SELECT COUNT(*) c FROM users').get().c, 1);
 });
+
+test('login throttle: per account+IP, counted before verifying, proxy-aware', async (x) => {
+  const t = await boot({ trustProxy: true }); x.after(t.close);
+  await setupAdmin(t);
+  const login = (email, ip, password = 'wrong password') => client(t.base).json('/api/login', { email, password }, 'POST', { 'x-forwarded-for': `1.1.1.1, ${ip}` });
+  const codes = (await Promise.all(Array.from({ length: 12 }, () => login('ada@example.com', '9.9.9.9')))).map((r) => r.status);
+  assert.equal(codes.filter((c) => c === 429).length, 2, String(codes)); // parallel attempts are all counted
+  assert.equal((await login('ada@example.com', '9.9.9.9', 'correct horse battery')).status, 429);
+  assert.equal((await login('ada@example.com', '8.8.8.8', 'correct horse battery')).status, 200); // other clients unaffected
+});

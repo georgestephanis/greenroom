@@ -39,19 +39,18 @@ export function createApp(overrides = {}) {
   const auth = new Auth(db, config);
   const handleSpace = createSpaceHandler({ store, auth, config });
 
-  // Login throttle: in memory, pruned on access (no timers). Per IP, 10 failures per 15 minutes.
-  const fails = new Map();
-  const throttled = (ip) => {
+  // Login throttle: in memory, pruned on access (no timers). Per account+IP, 10 attempts per 15 minutes.
+  // Counted before the scrypt await so parallel attempts can't slip past; a success clears it.
+  const attempts = new Map();
+  const attempt = (key) => {
     const t = Date.now();
-    if (fails.size > 1000) for (const [k, v] of fails) if (v.reset < t) fails.delete(k);
-    const f = fails.get(ip);
-    return f && f.reset > t && f.n >= 10;
+    if (attempts.size > 1000) for (const [k, v] of attempts) if (v.reset < t) attempts.delete(k);
+    const f = attempts.get(key);
+    if (f && f.reset > t) return ++f.n > 10;
+    attempts.set(key, { n: 1, reset: t + 15 * 60e3 });
+    return false;
   };
-  const fail = (ip) => {
-    const f = fails.get(ip);
-    if (f && f.reset > Date.now()) f.n++;
-    else fails.set(ip, { n: 1, reset: Date.now() + 15 * 60e3 });
-  };
+  const clientIp = (req) => (config.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress;
 
   const sessionCookie = (s) => `${SESSION_COOKIE}=${s.cookie}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${new Date(s.expires).toUTCString()}`;
   const clearCookie = `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
@@ -67,7 +66,7 @@ export function createApp(overrides = {}) {
   async function api(req, res, url, cred, body) {
     const seg = url.pathname.split('/').slice(2); // after /api
     const m = req.method === 'POST' && body._method ? String(body._method).toUpperCase() : req.method;
-    const ip = req.socket.remoteAddress;
+    const ip = clientIp(req);
     const [a, b, c] = seg;
 
     if (a === 'setup' && m === 'POST') {
@@ -80,11 +79,11 @@ export function createApp(overrides = {}) {
       return { status: 201, body: { ok: true }, next: '/' };
     }
     if (a === 'login' && m === 'POST') {
-      if (throttled(ip)) throw httpErr(429, 'Too many attempts, try again later');
-      try {
-        const s = await auth.login(body.email, body.password, { userAgent: req.headers['user-agent'], ip });
-        res.setHeader('Set-Cookie', sessionCookie(s));
-      } catch (e) { fail(ip); throw e; }
+      const key = `${String(body.email || '').toLowerCase()}|${ip}`;
+      if (attempt(key)) throw httpErr(429, 'Too many attempts, try again later');
+      const s = await auth.login(body.email, body.password, { userAgent: req.headers['user-agent'], ip });
+      attempts.delete(key);
+      res.setHeader('Set-Cookie', sessionCookie(s));
       return { status: 200, body: { ok: true }, next: safeNext(body._next) };
     }
     if (a === 'invites' && b === 'accept' && m === 'POST') {

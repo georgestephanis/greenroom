@@ -19,6 +19,7 @@ export function loadConfig(env = process.env, overrides = {}) {
     host: env.HOST ?? '127.0.0.1',
     port: int(env.PORT, 8080),
     publicUrl: env.FREESPACE_PUBLIC_URL ?? '',
+    trustProxy: env.FREESPACE_TRUST_PROXY === '1', // take the client IP from X-Forwarded-For (last hop)
     maxUploadBytes: int(env.FREESPACE_MAX_UPLOAD_BYTES, 200 * 1024 * 1024),
     maxFileBytes: int(env.FREESPACE_MAX_FILE_BYTES, 100 * 1024 * 1024),
     maxJsonBytes: int(env.FREESPACE_MAX_JSON_BYTES, 24 * 1024 * 1024),

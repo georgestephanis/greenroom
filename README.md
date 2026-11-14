@@ -23,6 +23,7 @@ Open it, create the admin account at `/setup`, then invite your team from the Te
 | `FREESPACE_DATA_DIR` | `./data` | database, blobs, signing secret |
 | `HOST` / `PORT` | `127.0.0.1` / `8080` | |
 | `FREESPACE_PUBLIC_URL` | | used for invite links |
+| `FREESPACE_TRUST_PROXY` | | `1` behind a proxy that sets `X-Forwarded-For`, so login throttling sees real client IPs |
 | `FREESPACE_MAX_UPLOAD_BYTES` | 200 MB | also `..._MAX_FILE_BYTES`, `..._MAX_SPACE_BYTES`, `..._MAX_TOTAL_BYTES` |
 
 It idles at well under 100 MB of RAM; `npm test` boots it with a 256 MB heap cap and checks RSS.
