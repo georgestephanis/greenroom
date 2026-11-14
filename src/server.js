@@ -13,6 +13,7 @@ import { createMcp } from './mcp.js';
 import { applyDashboardHeaders, checkWrite, DASHBOARD_CSP } from './security.js';
 import { createSpaceHandler } from './serve.js';
 import { importZip } from './zip.js';
+import { exportBundle, importBundle, verifyExport } from './bundle.js';
 import { newId, now, randomToken, sha256hex } from './util.js';
 import * as ui from './dashboard.js';
 
@@ -222,20 +223,61 @@ export function createApp(overrides = {}) {
   const pubSpace = (s) => ({ id: s.id, slug: s.slug, name: s.name, privacy: s.privacy, live_version_id: s.live_version_id, url: `/s/${s.slug}/` });
   const pubVersion = (v) => ({ id: v.id, number: v.number, message: v.message, author: v.author_name, source: v.source, files: v.total_files, bytes: v.total_bytes, created_at: v.created_at });
 
-  // Raw zip upload: streamed to a tmp file, then unpacked entry by entry into CAS.
-  async function upload(req, res, url, cred) {
-    const slug = url.pathname.split('/')[3];
-    const space = slugSpace(cred, slug, 'publish');
+  // Raw zip body streamed to a tmp file (capped), never held in memory.
+  async function spool(req) {
     const tmp = path.join(config.tmpDir, `up-${randomToken(8)}.zip`);
+    let n = 0;
     try {
-      let n = 0;
       await pipeline(req, async function* (src) {
         for await (const c of src) { n += c.length; if (n > config.maxUploadBytes) throw httpErr(413, 'Upload too large'); yield c; }
       }, fs.createWriteStream(tmp));
+    } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
+    return tmp;
+  }
+
+  // Raw zip upload: spooled to disk, then unpacked entry by entry into CAS.
+  async function upload(req, res, url, cred) {
+    const slug = url.pathname.split('/')[3];
+    const space = slugSpace(cred, slug, 'publish');
+    const tmp = await spool(req);
+    try {
       const entries = await importZip(tmp, cas, config);
       const v = await store.createVersion(cred, space, entries, { message: url.searchParams.get('message') || 'Uploaded zip', source: 'ui' });
       return json(res, 201, { version: pubVersion(v), warnings: v.warnings });
     } finally {
+      fs.rm(tmp, { force: true }, () => {});
+    }
+  }
+
+  // Import a freespace bundle as a new space. A person's act (like deleting or going public), never an agent's.
+  async function importSpace(req, res, url, cred) {
+    requireSession(cred);
+    const replace = url.searchParams.get('replace') === '1';
+    const tmp = await spool(req);
+    try {
+      const r = await importBundle(store, cred, tmp, { slug: url.searchParams.get('slug') || undefined, replace });
+      return json(res, 201, { space: pubSpace(r.space), versions: r.versions, warnings: r.warnings, remapped: r.remapped });
+    } finally {
+      fs.rm(tmp, { force: true }, () => {});
+    }
+  }
+
+  // Exports are built on disk and streamed out; at most two at once keeps a 1 GB box safe.
+  let exporting = 0;
+  async function sendExport(res, cred, space, history) {
+    if (exporting >= 2) { res.setHeader('Retry-After', '10'); throw httpErr(503, 'Too many exports running; try again shortly'); }
+    exporting++;
+    const tmp = path.join(config.tmpDir, `exp-${randomToken(8)}.zip`);
+    try {
+      await exportBundle(store, space, { history, outFile: tmp });
+      store.log(cred, 'space.exported', space.id, { history }, { type: 'space', id: space.id });
+      res.writeHead(200, {
+        'Content-Type': 'application/zip', 'Content-Length': fs.statSync(tmp).size,
+        'Content-Disposition': `attachment; filename="${space.slug}.freespace${history ? '-history' : ''}.zip"`,
+      });
+      await pipeline(fs.createReadStream(tmp), res);
+    } finally {
+      exporting--;
       fs.rm(tmp, { force: true }, () => {});
     }
   }
@@ -283,6 +325,12 @@ export function createApp(overrides = {}) {
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
     if (p === '/team') return html(res, 200, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
     if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding())); }
+    m = /^\/spaces\/([^/]+)\/export$/.exec(p);
+    if (m) {
+      const space = store.space(m[1]);
+      if (!space) return html(res, 404, ui.notFoundPage(cred));
+      return sendExport(res, cred, space, url.searchParams.get('history') === '1');
+    }
     m = /^\/spaces\/([^/]+)(\/diff)?$/.exec(p);
     if (m) {
       const space = store.space(m[1]);
@@ -358,6 +406,13 @@ export function createApp(overrides = {}) {
       }
       if (url.pathname === '/mcp') return await handleMcp(req, res);
       if (['/oauth/token', '/oauth/revoke', '/oauth/register'].includes(url.pathname)) return await oauthEndpoint(req, res, url);
+      // Signed download link from the MCP export_space tool: the signature is the credential.
+      const ex = req.method === 'GET' && /^\/export\/([a-z0-9-]+)\/(current|history)$/.exec(url.pathname);
+      if (ex) {
+        const space = verifyExport(config.secret, ex[1], ex[2], url.searchParams.get('exp'), url.searchParams.get('sig')) && store.space(ex[1]);
+        if (!space) return json(res, 404, { error: 'This download link is invalid or has expired' });
+        return await sendExport(res, null, space, ex[2] === 'history');
+      }
       const cred = auth.resolve(req);
       const write = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
       if (!write && url.pathname.startsWith('/api/')) {
@@ -366,7 +421,8 @@ export function createApp(overrides = {}) {
       }
       if (!write) return await dashboard(req, res, url, cred);
 
-      const isUpload = /^\/api\/spaces\/[^/]+\/upload$/.test(url.pathname);
+      const isImport = url.pathname === '/api/import';
+      const isUpload = isImport || /^\/api\/spaces\/[^/]+\/upload$/.test(url.pathname);
       const isForm = (req.headers['content-type'] || '').split(';')[0] === 'application/x-www-form-urlencoded';
       const body = isUpload ? {} : await parseBody(req, isForm);
       if (url.pathname === '/oauth/authorize') { // the person's consent: cookie session + CSRF like any dashboard form
@@ -379,7 +435,7 @@ export function createApp(overrides = {}) {
       if (refusal) throw httpErr(403, refusal);
       if (isUpload) {
         if (!cred) throw httpErr(401, 'Sign in required');
-        return await upload(req, res, url, cred);
+        return await (isImport ? importSpace : upload)(req, res, url, cred);
       }
       if (!url.pathname.startsWith('/api/')) throw httpErr(404, 'Not found');
       const r = await api(req, res, url, cred, body);

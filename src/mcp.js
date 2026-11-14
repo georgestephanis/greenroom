@@ -3,6 +3,7 @@
 // what to ask for, so the client can step up through /oauth/authorize.
 import { httpErr, can } from './auth.js';
 import { SLUG_RE } from './util.js';
+import { signExport } from './bundle.js';
 
 const PROTOCOL = '2025-06-18';
 const slugArg = { slug: { type: 'string', description: 'Space slug' } };
@@ -33,6 +34,11 @@ export const TOOLS = [
     inputSchema: obj({ ...slugArg, label: { type: 'string' }, expires_at: { type: 'string', description: 'e.g. 2026-12-01T17:00:00-05:00' }, expires_in: { type: 'string', description: 'e.g. 7d, 12h, 30m' }, password: { type: 'string' }, max_uses: { type: 'integer' } }, ['slug']),
   },
   { name: 'revoke_share_link', description: 'Revoke a share link; anyone holding it loses access at once.', inputSchema: obj({ ...slugArg, id: { type: 'string', description: 'Link id from create_share_link' } }) },
+  {
+    name: 'export_space',
+    description: 'Get a download link (valid 10 minutes) for the space as a portable zip. history=true includes every version, the activity log and a git fast-import stream. Share-link secrets are never included. Needs the export scope.',
+    inputSchema: obj({ ...slugArg, history: { type: 'boolean' } }, ['slug']),
+  },
 ];
 
 // The challenge asks for what the grant already has plus what is missing, so a client that steps up
@@ -110,6 +116,12 @@ export function createMcp({ store, db }) {
       const note = g.switched ? `The space was team-only and is now "Anyone with the link". Only this new link is live${paused ? `; ${paused} link(s) paused earlier stay paused until a person resumes them in the dashboard` : ''}.` : undefined;
       return { link: pubLink(origin, s, g), space_privacy: 'link', note };
     },
+    export_space: (cred, a, origin) => {
+      const s = space(cred, a.slug, 'export');
+      const { path, expires_at } = signExport(store.config.secret, s.slug, a.history === true);
+      store.log(cred, 'space.export_link', s.id, { history: a.history === true }, { type: 'space', id: s.id });
+      return { url: `${origin}${path}`, expires_at };
+    },
     revoke_share_link: (cred, a, origin) => {
       const s = space(cred, a.slug, 'share');
       return { link: pubLink(origin, s, store.revokeLink(cred, s, a.id)) };
@@ -123,7 +135,7 @@ export function createMcp({ store, db }) {
     if (msg.id === undefined) return { status: 202 }; // notification
     switch (msg.method) {
       case 'initialize': // ponytail: one supported version; answer with it whatever the client asked for
-        return reply({ protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'freespace', version: '0.3.0' } });
+        return reply({ protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'freespace', version: '0.4.0' } });
       case 'ping': return reply({});
       case 'tools/list': return reply({ tools: TOOLS });
       case 'tools/call': {

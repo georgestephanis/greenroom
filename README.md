@@ -9,7 +9,7 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 - **One file of state**: SQLite (`node:sqlite`) plus a blob directory. No native dependencies, no timers, no background workers.
 - Node 24+, GPL-3.0-or-later.
 
-This release covers milestones M0–M3: the core, OAuth and MCP, and client sharing (share links, passwords, expiry, view tracking, branding). Export (M4), subdomain mode and a publishing CLI are not built yet.
+This release covers milestones M0–M4: the core, OAuth and MCP, client sharing (share links, passwords, expiry, view tracking, branding), and portability (export and import). Plugins (M5), subdomain mode and a publishing CLI are not built yet.
 
 ## Run it
 
@@ -58,7 +58,7 @@ Switching a space away from "Anyone with the link" pauses its links. When a pers
 
 ## Agents: MCP and OAuth
 
-The MCP endpoint is `POST /mcp` (Streamable HTTP, JSON responses). Tools: `list_spaces`, `get_space`, `create_space`, `publish`, `read_file`, `list_versions`, `diff_versions`, `rollback`, `create_share_link`, `revoke_share_link` (both need `share`; creating a link switches a team-only space to "Anyone with the link" and says so in a `note`; it fails on a Public space).
+The MCP endpoint is `POST /mcp` (Streamable HTTP, JSON responses). Tools: `list_spaces`, `get_space`, `create_space`, `publish`, `read_file`, `list_versions`, `diff_versions`, `rollback`, `create_share_link`, `revoke_share_link` (both need `share`; creating a link switches a team-only space to "Anyone with the link" and says so in a `note`; it fails on a Public space). `export_space` (needs `export`; returns a download link valid for 10 minutes).
 
 Every way in — dashboard session, OAuth access token, pasted `fsa_` token — resolves to one credential object before any route runs, and every check reads only that.
 
@@ -72,6 +72,13 @@ Every way in — dashboard session, OAuth access token, pasted `fsa_` token — 
 - A space an agent creates joins that agent's grant, and only that one.
 
 Anything that escalates privileges needs a person's own signed-in session, never a scoped credential: inviting people, disabling users, minting tokens, approving OAuth grants, instance settings, and making a space public. No MCP tool does any of these.
+
+## Export and import
+
+Each space page has **Download current site** (`{slug}.freespace.zip`) and **Download with full history**
+(`{slug}.freespace-history.zip`, which adds every version, the activity log and a `git fast-import` stream). The Spaces page
+has an **Import** card that takes either file; an existing slug is never overwritten unless you tick Replace.
+Share links, passwords and tokens are never exported. Format, limits and what is left out: [docs/bundle-spec.md](docs/bundle-spec.md).
 
 ## Develop
 

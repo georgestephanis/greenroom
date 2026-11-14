@@ -34,7 +34,10 @@ export function spacesPage(cred, spaces) {
 <td>${s.live_number ? `v${s.live_number} by ${esc(s.live_author)}<br><small>${fmtTime(s.live_at)}</small>` : '<small>nothing published</small>'}</td></tr>`).join('');
   return layout('Spaces', cred, `<h1>Spaces</h1>
 <table><thead><tr><th>Space</th><th>Who can view</th><th>Last published</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No spaces yet.</td></tr>'}</tbody></table>
-<section class="card"><h2>New space</h2><form method="post" action="/api/spaces">${hidden(cred)}<input type="hidden" name="_next" value="__space__">${field('name', 'Name')}<button>Create</button></form></section>`);
+<section class="card"><h2>New space</h2><form method="post" action="/api/spaces">${hidden(cred)}<input type="hidden" name="_next" value="__space__">${field('name', 'Name')}<button>Create</button></form></section>
+<section class="card"><h2>Import a space</h2><form data-upload="/api/import" data-goto="space"><input type="file" name="zip" accept=".zip,application/zip" required>
+<input name="slug" placeholder="Slug (optional; defaults to the one in the bundle)"><label class="check"><input type="checkbox" name="replace" value="1"> Replace the space if that slug exists (its versions are replaced; links and activity stay)</label>
+<button>Import</button><span class="status"></span></form><small>Takes a .freespace.zip or .freespace-history.zip exported from freespace.</small></section>`);
 }
 
 export function spacePage(cred, space, versions, warnings, links) {
@@ -51,6 +54,8 @@ ${live ? `<iframe class="preview" sandbox="${PREVIEW_SANDBOX}" src="/s/${esc(spa
 ${warnings.length ? `<section class="card warn"><h2>Warnings on the live version</h2><ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></section>` : ''}
 <section class="card"><h2>Upload</h2><form data-upload="/api/spaces/${esc(space.slug)}/upload"><input type="file" name="zip" accept=".zip,application/zip" required>
 <input name="message" placeholder="What changed?"><button>Publish zip</button><span class="status"></span></form></section>
+<section class="card"><h2>Export</h2><p><a href="/spaces/${esc(space.slug)}/export">Download current site</a> · <a href="/spaces/${esc(space.slug)}/export?history=1">Download with full history</a></p>
+<small>Share links and passwords are never included.</small></section>
 <section class="card"><h2>Who can view</h2><form method="post" action="/api/spaces/${esc(space.slug)}">${hidden(cred)}<input type="hidden" name="_method" value="PATCH"><input type="hidden" name="_next" value="/spaces/${esc(space.slug)}">
 <select name="privacy">${[['team', 'Team only'], ['link', 'Anyone with the link'], ['public', 'Public']].map(([v, l]) => `<option value="${v}"${space.privacy === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
 <button>Save</button></form><small>Team members can always view. Switching away from “Anyone with the link” pauses its links; switching back restores them. A link created while the space is team-only switches it to “Anyone with the link”; links paused earlier stay paused until you resume them.</small></section>
@@ -156,12 +161,20 @@ export const APP_JS = `
       if (!file) return;
       const status = f.querySelector('.status');
       status.textContent = 'Uploading…';
-      const q = f.elements.message.value ? '?message=' + encodeURIComponent(f.elements.message.value) : '';
+      const p = new URLSearchParams();
+      for (const el of f.elements) if (el.name && el.name !== 'zip' && el.value && (el.type !== 'checkbox' || el.checked)) p.set(el.name, el.value);
+      const q = p.size ? '?' + p : '';
       const r = await fetch(f.dataset.upload + q, {
         method: 'POST', body: file,
         headers: { 'Content-Type': 'application/zip', 'X-CSRF-Token': document.querySelector('meta[name=csrf]').content },
       });
-      if (r.ok) location.reload();
+      if (r.ok && f.dataset.goto) {
+        const j = await r.json(), to = '/spaces/' + j.space.slug;
+        if (!j.warnings.length) return (location.href = to);
+        status.textContent = '';
+        const a = document.createElement('a'); a.href = to; a.textContent = 'Open the imported space';
+        status.append(j.warnings.join(' '), ' ', a);
+      } else if (r.ok) location.reload();
       else status.textContent = (await r.json().catch(() => ({}))).error || 'Upload failed';
     });
   }

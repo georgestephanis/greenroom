@@ -259,7 +259,7 @@ export class Store {
     const list = [...entries.values()];
     const total = list.reduce((n, f) => n + f.size, 0);
     if (total > this.config.maxSpaceBytes) throw httpErr(413, 'Space size limit exceeded');
-    const routing = await this.#compileRouting(entries);
+    const routing = await this.compileRouting(entries);
     const live = space.live_version_id ? this.db.prepare('SELECT * FROM versions WHERE id = ?').get(space.live_version_id) : null;
     const parentId = (parent ?? live)?.id ?? null;
     const id = newId('ver'), t = now();
@@ -281,7 +281,7 @@ export class Store {
   }
 
   // Rule 2: tenant _headers / _redirects are parsed at finalize; reserved headers are dropped with a warning.
-  async #compileRouting(entries) {
+  async compileRouting(entries) {
     const warnings = [];
     let redirects = [], headers = [];
     const red = entries.get('_redirects'), hdr = entries.get('_headers');
