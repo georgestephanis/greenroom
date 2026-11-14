@@ -50,7 +50,7 @@ test('versions: patch publish, diff, rollback creates a new version, history is 
 test('zip import: strips shared folder, rejects traversal, duplicate paths and bombs', async () => {
   const d = tmp();
   const cas = new CAS(path.join(d, 'b'), path.join(d, 't'));
-  const lim = { maxFileBytes: 1000, maxTotalBytes: 5000 };
+  const lim = { maxFileBytes: 1000, maxSpaceBytes: 5000 };
   const write = (buf) => { const p = path.join(d, `${Math.random()}.zip`); fs.writeFileSync(p, buf); return p; };
   const ok = await importZip(write(makeZip([{ name: 'site/index.html', data: '<h1>', deflate: true }, { name: 'site/css/a.css', data: 'x' }, { name: '__MACOSX/x', data: '' }])), cas, lim);
   assert.deepEqual([...ok.keys()].sort(), ['css/a.css', 'index.html']);

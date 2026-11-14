@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CAS } from '../src/cas.js';
+import { importZip } from '../src/zip.js';
+import { makeZip } from './zipbuilder.js';
 import { boot, client, setupAdmin } from './helpers.js';
 import { compilePattern, matchRule, parseHeadersFile } from '../src/routing.js';
 
@@ -77,4 +79,13 @@ test('unauthenticated POSTs need same-origin Fetch Metadata or a same-host Origi
   const setup = (headers) => client(t.base).json('/api/setup', { name: 'A', email: 'a@example.com', password: 'long enough password' }, 'POST', headers);
   for (const h of [{ 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': '' }, { 'sec-fetch-site': '', origin: 'https://evil.example' }]) assert.equal((await setup(h)).status, 403, JSON.stringify(h));
   assert.equal((await setup({ 'sec-fetch-site': '', origin: `http://${host}` })).status, 201);
+});
+
+test('zip import caps the inflated total at maxSpaceBytes', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-zip-'));
+  const cas = new CAS(path.join(dir, 'b'), path.join(dir, 't'));
+  const zip = path.join(dir, 'a.zip');
+  fs.writeFileSync(zip, makeZip([{ name: 'a', data: 'x'.repeat(800), deflate: true }, { name: 'b', data: 'y'.repeat(800), deflate: true }]));
+  await assert.rejects(importZip(zip, cas, { maxFileBytes: 1000, maxSpaceBytes: 1000 }), { status: 413 });
+  fs.rmSync(dir, { recursive: true, force: true });
 });

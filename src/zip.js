@@ -15,7 +15,7 @@ async function readAt(fh, pos, len) {
 }
 
 /** Returns Map(path -> {path, sha256, size, content_type}). */
-export async function importZip(file, cas, { maxFileBytes, maxTotalBytes }) {
+export async function importZip(file, cas, { maxFileBytes, maxSpaceBytes }) {
   const fh = await fs.promises.open(file, 'r');
   try {
     const size = (await fh.stat()).size;
@@ -66,7 +66,7 @@ export async function importZip(file, cas, { maxFileBytes, maxTotalBytes }) {
       // Bounded by the *actual* inflated size, not the declared one (zip bombs).
       let stored;
       try {
-        stored = await cas.storeStream(src, Math.min(maxFileBytes, maxTotalBytes - total));
+        stored = await cas.storeStream(src, Math.min(maxFileBytes, maxSpaceBytes - total));
       } catch (e) {
         throw httpErr(413, `Could not store ${p}: ${e.message}`);
       }
