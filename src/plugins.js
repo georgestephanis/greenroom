@@ -154,7 +154,7 @@ export function createPlugins({ store, config, installed = [] }) {
     tools: () => [...defs.values()].flatMap((p) => [...p.tools.values()]),
     tool: (name) => [...defs.values()].map((p) => p.tools.get(name)).find(Boolean),
     async callTool(space, t, args) {
-      return t.handler({ space: { id: space.id, slug: space.slug }, args, settings: settingsOf(space, t.plugin), dir: dirOf(space, t.plugin), ctx: { cas: store.cas } });
+      return t.handler({ space: { id: space.id, slug: space.slug }, args, settings: settingsOf(space, t.plugin), dir: dirOf(space, t.plugin) });
     },
 
     // ---- lifecycle ----

@@ -272,7 +272,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
 
     // Plugins may rewrite HTML documents at serve time (the sqlite doc token, the watermark banner).
     // Stored files are never touched, and the response is never cached.
-    if (status === 200 && file.content_type.startsWith('text/html') && isDocumentRequest(req) && file.size <= 8 * 1024 * 1024 && plugins.hasTransforms(space)) {
+    if ((status === 200 || status === 404) && file.content_type.startsWith('text/html') && isDocumentRequest(req) && file.size <= 8 * 1024 * 1024 && plugins.hasTransforms(space)) {
       const html = await plugins.transform(space, { html: (await store.cas.read(file.sha256)).toString('utf8'), viewer: who, subject });
       res.setHeader('Cache-Control', 'no-store');
       return send(res, status, method === 'HEAD' ? '' : html, { 'Content-Length': Buffer.byteLength(html) });

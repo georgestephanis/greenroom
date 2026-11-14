@@ -61,6 +61,7 @@ test('loader: a plugin sees a narrow ctx, never core tables or credentials', asy
     register(ctx) {
       seen = ctx;
       ctx.serve({ path: '/_fs/who', auth: 'token', handler: (req) => ({ json: { keys: Object.keys(req).sort() } }) });
+      ctx.mcp.tool('spy_args', { description: 'test', inputSchema: { type: 'object', properties: {} }, perm: 'read' }, (a) => ({ keys: Object.keys(a).sort() }));
     },
   });
   const { t, admin } = await world(x, { enable: [], on: [], overrides: { plugins: [spy] } });
@@ -79,6 +80,8 @@ test('loader: a plugin sees a narrow ctx, never core tables or credentials', asy
   // The route handler is handed the request data only, no credential and no db.
   const r = await fetch(t.base + '/s/demo/_fs/who', { headers: { 'sec-fetch-site': 'same-origin' } });
   assert.equal(r.status, 401, 'token routes need the doc token');
+  // A tool handler gets the call's data, not core objects (the plugin's own ctx has the narrow CAS).
+  assert.deepEqual(sc(await mcp(t, await token(admin, ['read']), 'spy_args', { slug: 'demo' })).keys, ['args', 'dir', 'settings', 'space']);
 });
 
 test('loader: cookies a plugin route sets are renamed and scoped to the space (rule 5)', async (x) => {
@@ -120,6 +123,16 @@ test('watermark: shown only to share-link viewers, document views only', async (
   // public viewers
   await admin.post('/api/spaces/demo', { privacy: 'public' }, 'PATCH');
   assert.doesNotMatch(await (await client(t.base).fetch('/s/demo/', { headers: DOC })).text(), /Confidential/);
+});
+
+test('watermark: the 404 page gets the banner and the doc token too', async (x) => {
+  const { t, admin } = await world(x);
+  await admin.post('/api/spaces/demo/versions', { files: files({ 'index.html': PAGE, '404.html': PAGE }) });
+  const r = await asLink(t, await link(admin, 'Acme'), '/missing');
+  assert.equal(r.status, 404);
+  const html = await r.text();
+  assert.match(html, /Confidential — prepared for Acme/);
+  assert.match(html, /freespace-doc-token/);
 });
 
 test('watermark: off by default, and stored files never change', async (x) => {
@@ -167,6 +180,7 @@ test('sqlite: MCP creates the database; the browser API obeys the per-table poli
   assert.equal((await api(t, dt, { op: 'delete', table: 'notes', where: { id: 1 } })).status, 403, 'read+insert cannot delete');
   assert.equal((await api(t, dt, { op: 'select', table: 'notes; DROP TABLE notes' })).status >= 400, true, 'names are checked against the schema');
   assert.equal((await api(t, dt, { sql: 'select 1' })).status >= 400, true, 'no raw SQL from the browser');
+  assert.equal((await api(t, dt, { op: 'select', table: 'notes', order: 'id' })).status, 400, 'order must be an array');
 });
 
 test('sqlite: the doc token is bound to the viewer, re-checked on every call', async (x) => {
@@ -340,7 +354,7 @@ test('sqlite: snapshots follow versions, and a database round-trips through both
   const list = sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'list' }));
   assert.equal(list.snapshots.length, 1, 'publishing took a snapshot');
   await mcp(t, tok, 'db_exec', { slug: 'demo', sql: "UPDATE n SET v = 'two'" });
-  assert.equal(sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'restore', version: list.snapshots[0].version })).restored, list.snapshots[0].version);
+  assert.equal(sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'restore', id: list.snapshots[0].id })).restored, list.snapshots[0].id);
   assert.equal(sc(await mcp(t, tok, 'db_query', { slug: 'demo', sql: 'SELECT v FROM n' })).rows[0].v, 'one');
 
   const cur = await entries(await exportTo(admin, 'demo', false));
@@ -375,6 +389,22 @@ test('sqlite: an import for a plugin this instance has not enabled keeps the fil
   assert.ok((await up.json()).warnings.some((w) => /sqlite/.test(w)));
   const again = await entries(await exportTo(a2, 'copy', false));
   assert.deepEqual([...again.keys()].filter((k) => k.startsWith('plugins/sqlite/')).sort(), [...(await entries(await exportTo(admin, 'demo', false))).keys()].filter((k) => k.startsWith('plugins/sqlite/')).sort());
+});
+
+test('sqlite: restore picks a snapshot by id even when versions repeat', async (x) => {
+  const { t, admin } = await world(x);
+  await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { snapshots: 'manual' } }, 'PUT');
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  const q = async () => sc(await mcp(t, tok, 'db_query', { slug: 'demo', sql: 'SELECT v FROM n' })).rows[0].v;
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: ['CREATE TABLE n (v TEXT)', "INSERT INTO n VALUES ('a')"] });
+  const a = sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'create' })).snapshot;
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: "UPDATE n SET v = 'b'" });
+  const b = sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'create' })).snapshot;
+  assert.equal(a.version, b.version);
+  await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'restore', id: a.id });
+  assert.equal(await q(), 'a');
+  await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'restore', id: b.id });
+  assert.equal(await q(), 'b');
 });
 
 test('sqlite: snapshots round-trip while the plugin is switched off', async (x) => {

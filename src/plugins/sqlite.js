@@ -109,6 +109,7 @@ function structured(dir, policy, b) {
     return wrap(() => {
       if (b.op === 'select') {
         const w = filters(db, cols, b.where);
+        if (b.order !== undefined && (!Array.isArray(b.order) || b.order.length > 10)) throw httpErr(400, 'order must be an array of up to 10 { col, dir }');
         const order = (b.order ?? []).map((o) => {
           if (!cols.includes(o?.col)) throw httpErr(400, 'Unknown order column');
           return `${quote(o.col)} ${o.dir === 'desc' ? 'DESC' : 'ASC'}`;
@@ -151,7 +152,7 @@ async function snapshot(ctx, space, dir, version, trigger, keep) {
   try {
     const { sha256, size } = await ctx.cas.storeStream(fs.createReadStream(tmp));
     const st = readState(dir);
-    st.snapshots = [{ version, sha256, size, created_at: now(), trigger }, ...st.snapshots].slice(0, keep);
+    st.snapshots = [{ id: crypto.randomUUID(), version, sha256, size, created_at: now(), trigger }, ...st.snapshots].slice(0, keep);
     st.schema = withDb(dir, { readOnly: true }, schemaHash);
     writeState(dir, st);
     return st.snapshots[0];
@@ -208,17 +209,18 @@ export default definePlugin({
           return { changes };
         }));
       });
-    ctx.mcp.tool('db_checkpoint', { description: 'Snapshots of the database. action: "create" now, "list", or "restore" a version number (the current database is snapshotted first).', inputSchema: { type: 'object', properties: { action: { enum: ['create', 'list', 'restore'] }, version: { type: 'number' } }, required: ['action'] }, perm: 'db' },
+    ctx.mcp.tool('db_checkpoint', { description: 'Snapshots of the database. action: "create" now, "list", or "restore" a snapshot by its id from "list" (the current database is snapshotted first).', inputSchema: { type: 'object', properties: { action: { enum: ['create', 'list', 'restore'] }, id: { type: 'string' } }, required: ['action'] }, perm: 'db' },
       async ({ args, dir, settings, space }) => {
         const cur = ctx.currentVersion?.(space);
         if (args.action === 'list') return { snapshots: readState(dir).snapshots };
         if (args.action === 'create') return { snapshot: await snapshot(ctx, space, dir, cur ?? 0, 'manual', settings.keep) ?? null };
         if (args.action !== 'restore') throw httpErr(400, 'action must be create, list or restore');
-        const snap = readState(dir).snapshots.find((s) => s.version === args.version);
+        // By id: a manual and a before-restore snapshot can share a version number.
+        const snap = readState(dir).snapshots.find((s) => s.id === args.id);
         if (!snap || !ctx.cas.has(snap.sha256)) throw httpErr(404, 'No such snapshot');
         await snapshot(ctx, space, dir, cur ?? 0, 'before-restore', settings.keep);
         await restore(ctx, dir, ctx.cas.stream(snap.sha256));
-        return { restored: snap.version };
+        return { restored: snap.id, version: snap.version };
       });
 
     // Snapshots follow versions: after a publish, per the space's mode.
@@ -263,7 +265,8 @@ export default definePlugin({
           else warn(`Snapshot ${sha.slice(0, 8)} was skipped: ${got.error ?? 'checksum mismatch'}.`);
         }
       }
-      const snaps = (Array.isArray(records) ? records : []).filter((s) => keep.has(s?.sha256) && Number.isInteger(s.version)).slice(0, MAX_SNAPSHOTS);
+      const snaps = (Array.isArray(records) ? records : []).filter((s) => keep.has(s?.sha256) && Number.isInteger(s.version)).slice(0, MAX_SNAPSHOTS)
+        .map((s) => ({ id: crypto.randomUUID(), version: s.version, sha256: s.sha256, size: Number(s.size) || 0, created_at: String(s.created_at ?? ''), trigger: String(s.trigger ?? 'imported').slice(0, 40) }));
       writeState(dir, { schema: null, snapshots: snaps });
     });
   },
