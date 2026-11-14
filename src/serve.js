@@ -36,13 +36,14 @@ export function createSpaceHandler({ store, auth, config }) {
     if (space.privacy !== 'public') {
       const viewer = verifyViewer(config.secret, space, cookies[viewerCookieName(space)]);
       let ok = false;
-      if (viewer && viewer.kind === 'team') ok = !!auth.activeUser(viewer.subject); // live: removed member loses access
+      // Bound to the dashboard session that minted it: logout or a removed member ends access.
+      if (viewer && viewer.kind === 'team') ok = !!auth.sessionUser(viewer.subject);
       if (!ok) {
         // The Strict dashboard cookie only arrives on same-site navigations; use it to mint a viewer cookie.
         const s = auth.sessionFromCookie(cookies[SESSION_COOKIE]);
         const u = s && auth.activeUser(s.user_id);
         if (u) {
-          const signed = signViewer(config.secret, space, u.id, config.viewerMinutes * 60e3);
+          const signed = signViewer(config.secret, space, s.id, config.viewerMinutes * 60e3);
           res.setHeader('Set-Cookie', viewerSetCookie(space, signed));
           ok = true;
         }

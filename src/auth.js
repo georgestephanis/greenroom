@@ -121,6 +121,11 @@ export class Auth {
     this.db.prepare('UPDATE users SET last_login_at = ? WHERE id = ?').run(t, userId);
     return { id, cookie: `${id}.${hmac(this.config.secret, `session:${id}`)}`, expires };
   }
+  /** The active user behind a live (unrevoked, unexpired) session id, else null. */
+  sessionUser(id) {
+    const s = this.db.prepare('SELECT user_id FROM sessions WHERE id = ? AND revoked_at IS NULL AND expires_at > ?').get(String(id), now());
+    return s ? this.activeUser(s.user_id) : null;
+  }
   revokeSession(id) { this.db.prepare('UPDATE sessions SET revoked_at = ? WHERE id = ?').run(now(), id); }
 
   sessionFromCookie(value) {

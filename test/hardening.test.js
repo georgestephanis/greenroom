@@ -110,3 +110,17 @@ test('PHC hashes are written unpadded; padded ones still verify', async () => {
   parts[3] = pad(parts[3]); parts[4] = pad(parts[4]);
   assert.ok(await verifyPassword('long enough password', parts.join('$')));
 });
+
+test('logout revokes the viewer cookies its session minted', async (x) => {
+  const t = await boot(); x.after(t.close);
+  const admin = await setupAdmin(t);
+  await admin.post('/api/spaces', { name: 'Demo', slug: 'demo' });
+  await admin.post('/api/spaces/demo/versions', { files: [{ path: 'index.html', content: 'hi' }] });
+  const vc = (await admin.fetch('/s/demo/', { headers: { 'sec-fetch-dest': 'document' } })).headers.getSetCookie().find((c) => c.startsWith('fsv_'));
+  const viewer = client(t.base);
+  const kv = vc.split(';')[0];
+  viewer.jar.set(kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1));
+  assert.equal((await viewer.fetch('/s/demo/')).status, 200);
+  assert.equal((await admin.post('/api/logout', {})).status, 200);
+  assert.equal((await viewer.fetch('/s/demo/')).status, 401);
+});
