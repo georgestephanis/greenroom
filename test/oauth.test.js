@@ -110,9 +110,15 @@ test('CIMD: client_id must be https, match its document, and list the redirect_u
 test('PKCE is required and verified; codes are single-use and a replay revokes the grant', async () => {
   const { t, ada } = await world();
   try {
-    const noPkce = await ada.fetch(authzQuery({ scope: 'read' }).replace('&code_challenge_method=S256', ''));
-    assert.equal(noPkce.status, 302);
-    assert.equal(new URL(noPkce.headers.get('location')).searchParams.get('error'), 'invalid_request');
+    const noPkce = () => ada.fetch(authzQuery({ scope: 'read' }).replace('&code_challenge_method=S256', ''));
+    const shown = await noPkce();
+    assert.equal(shown.status, 400, 'errors for a client never approved are shown, not redirected (open redirect)');
+    assert.equal(shown.headers.get('location'), null);
+    assert.match(await shown.text(), /invalid_request/);
+    await connect(t, ada);
+    const back = await noPkce(); // an approved client gets the RFC 6749 error redirect
+    assert.equal(back.status, 302);
+    assert.equal(new URL(back.headers.get('location')).searchParams.get('error'), 'invalid_request');
 
     const { verifier, challenge } = pkce();
     const pairs = [['_csrf', ada.csrf], ['response_type', 'code'], ['client_id', CLIENT], ['redirect_uri', REDIRECT], ['code_challenge', challenge], ['code_challenge_method', 'S256'], ['spaces', 'alpha'], ['perms', 'read'], ['decision', 'approve']];
@@ -137,9 +143,9 @@ test('unknown scope strings fail closed everywhere', async () => {
     assert.throws(() => parseScopeString('read admin'), /Unknown scope: admin/);
     assert.throws(() => parseScopeString('space:*'), /Unknown scope/);
     assert.deepEqual(parseScopeString('space:alpha spaces:create publish'), { spaces: ['alpha'], create: true, perms: ['publish'], readOnly: false });
+    const { refresh_token } = await connect(t, ada);
     const r = await ada.fetch(authzQuery({ code_challenge: pkce().challenge, scope: 'read superuser' }));
     assert.equal(new URL(r.headers.get('location')).searchParams.get('error'), 'invalid_scope');
-    const { refresh_token } = await connect(t, ada);
     const rr = await form(client(t.base), '/oauth/token', { grant_type: 'refresh_token', refresh_token, client_id: CLIENT, scope: 'read sudo' });
     assert.equal((await rr.json()).error, 'invalid_scope');
     // Consent form with a forged permission: no code is issued.

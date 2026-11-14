@@ -229,12 +229,17 @@ export function createApp(overrides = {}) {
       const q = Object.fromEntries(url.searchParams);
       let r;
       try { r = await oauth.checkRequest(q); } catch (e) { return html(res, 400, ui.messagePage(cred, 'Cannot connect this app', e.message)); }
-      if (r.error) return redirect(res, oauth.redirectWith(r.redirect_uri, { error: r.error, error_description: r.desc, state: r.state }, req), 302);
+      const prev = db.prepare("SELECT scope_json FROM api_keys WHERE kind = 'oauth' AND user_id = ? AND client_id = ? AND revoked_at IS NULL").get(cred.userId, r.client.client_id);
+      if (r.error) {
+        // Anyone can publish a CIMD document listing any redirect_uri, so error redirects would be an open
+        // redirect (RFC 9700 4.11.2). Only redirect to a client this member has already approved.
+        if (prev) return redirect(res, oauth.redirectWith(r.redirect_uri, { error: r.error, error_description: r.desc, state: r.state }, req), 302);
+        return html(res, 400, ui.messagePage(cred, 'Cannot connect this app', `${r.error}${r.desc ? `: ${r.desc}` : ''}`));
+      }
       // CSP form-action must allow the post-consent redirect to the client, or browsers block it.
       const ru = new URL(r.redirect_uri);
       res.setHeader('Content-Security-Policy', DASHBOARD_CSP.replace("form-action 'self'", `form-action 'self' ${/^https?:$/.test(ru.protocol) ? ru.origin : ru.protocol}`));
       // Approval replaces the grant's scope, so start from what this member already granted this client.
-      const prev = db.prepare("SELECT scope_json FROM api_keys WHERE kind = 'oauth' AND user_id = ? AND client_id = ? AND revoked_at IS NULL").get(cred.userId, r.client.client_id);
       const was = prev ? JSON.parse(prev.scope_json) : { spaces: [], create: false, perms: [] };
       const pick = {
         spaces: [...new Set([...(was.spaces === '*' ? [] : was.spaces), ...r.requested.spaces])],
