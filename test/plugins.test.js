@@ -1,0 +1,257 @@
+// M5: plugin loader, per-space enablement, the sqlite plugin and the watermark plugin (issue #214 section 11).
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { boot, client, setupAdmin } from './helpers.js';
+import { definePlugin } from '../src/plugins.js';
+import { withZip } from '../src/zip.js';
+
+const DOC = { 'sec-fetch-dest': 'document' };
+const files = (o) => Object.entries(o).map(([p, content]) => ({ path: p, content }));
+const PAGE = '<html><head></head><body><h1>hi</h1></body></html>';
+
+async function world(x, { enable = ['sqlite', 'watermark'], on = ['sqlite', 'watermark'], overrides } = {}) {
+  const t = await boot(overrides); x.after(t.close);
+  const admin = await setupAdmin(t);
+  await admin.post('/api/spaces', { name: 'Demo', slug: 'demo' });
+  assert.equal((await admin.post('/api/spaces/demo/versions', { files: files({ 'index.html': PAGE, 'a.css': 'x{}' }) })).status, 201);
+  for (const n of enable) assert.equal((await admin.post(`/api/admin/plugins/${n}`, { enabled: true })).status, 200);
+  for (const n of on) assert.equal((await admin.post(`/api/spaces/demo/plugins/${n}`, { enabled: true }, 'PUT')).status, 200);
+  return { t, admin };
+}
+const mcp = async (t, token, name, args = {}) => {
+  const r = await fetch(t.base + '/mcp', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }) });
+  return { status: r.status, body: await r.json() };
+};
+const token = async (admin, perms) => (await (await admin.post('/api/tokens', { name: 't' + perms.join(''), spaces: ['demo'], perms })).json()).token;
+const sc = (r) => r.body.result?.structuredContent;
+
+// ------------------------------------------------------------------ loader
+
+test('loader: plugins are off until an admin enables them, and a space opts in separately', async (x) => {
+  const { t, admin } = await world(x, { enable: [], on: [] });
+  assert.equal((await admin.post('/api/spaces/demo/plugins/watermark', { enabled: true }, 'PUT')).status, 409, 'not enabled on the instance');
+  await admin.post('/api/admin/plugins/watermark', { enabled: true });
+  await admin.post('/api/spaces/demo/plugins/watermark', { enabled: true }, 'PUT');
+  assert.deepEqual(t.plugins.active(t.store.space('demo')), ['watermark']);
+  await admin.post('/api/admin/plugins/watermark', { enabled: false });
+  assert.deepEqual(t.plugins.active(t.store.space('demo')), [], 'instance off beats space on');
+  const list = await (await admin.fetch('/api/spaces/demo/plugins')).json();
+  assert.deepEqual(list.plugins.map((p) => [p.name, p.enabled, p.instance_enabled]), [['sqlite', false, false], ['watermark', true, false]]);
+});
+
+test('loader: only an admin enables at the instance level, only a session configures a space', async (x) => {
+  const { t, admin } = await world(x, { enable: [], on: [] });
+  const tok = await token(admin, ['publish', 'db', 'share', 'export', 'read']);
+  const bearer = { authorization: `Bearer ${tok}`, 'content-type': 'application/json' };
+  assert.equal((await fetch(t.base + '/api/admin/plugins/watermark', { method: 'POST', headers: bearer, body: '{"enabled":true}' })).status, 403);
+  assert.equal(t.plugins.instanceEnabled('watermark'), false);
+  await admin.post('/api/admin/plugins/watermark', { enabled: true });
+  assert.equal((await fetch(t.base + '/api/spaces/demo/plugins/watermark', { method: 'PUT', headers: bearer, body: '{"enabled":true}' })).status, 403);
+});
+
+test('loader: a plugin sees a narrow ctx, never core tables or credentials', async (x) => {
+  let seen;
+  const spy = definePlugin({
+    name: 'spy', version: '1.0.0', description: 'test', spaceSettings: {},
+    register(ctx) {
+      seen = ctx;
+      ctx.serve({ path: '/_fs/who', auth: 'token', handler: (req) => ({ json: { keys: Object.keys(req).sort() } }) });
+    },
+  });
+  const { t, admin } = await world(x, { enable: [], on: [], overrides: { plugins: [spy] } });
+  await admin.post('/api/admin/plugins/spy', { enabled: true });
+  await admin.post('/api/spaces/demo/plugins/spy', { enabled: true }, 'PUT');
+  // Registered lazily at first use; trigger it with a document so the route has a token.
+  const html = await (await admin.fetch('/s/demo/', { headers: DOC })).text();
+  assert.ok(seen, 'register ran');
+  for (const k of ['db', 'store', 'auth', 'cas', 'sessions']) assert.ok(!(k === 'cas' ? false : k in seen), `ctx.${k}`);
+  assert.equal(typeof seen.cas.read, 'function');
+  assert.equal(seen.cas.storeBuffer, undefined, 'no write-by-hash into the shared CAS beyond streaming');
+  const flat = JSON.stringify(Object.keys(seen));
+  assert.doesNotMatch(flat, /credential|session|csrf|secret|password/i);
+  const tokenValue = /freespace-doc-token" content="([^"]+)"/.exec(html);
+  assert.equal(tokenValue, null, 'a plugin without the sqlite transform gets no doc token for free');
+  // The route handler is handed the request data only, no credential and no db.
+  const r = await fetch(t.base + '/s/demo/_fs/who', { headers: { 'sec-fetch-site': 'same-origin' } });
+  assert.equal(r.status, 401, 'token routes need the doc token');
+});
+
+test('loader: a space that lists a plugin this instance lacks keeps its data and says so', async (x) => {
+  const { t, admin } = await world(x, { enable: [], on: [] });
+  t.db.prepare(`UPDATE spaces SET plugins_json = '["ghost"]'`).run();
+  const list = await (await admin.fetch('/api/spaces/demo/plugins')).json();
+  assert.ok(list.plugins.some((p) => p.name === 'ghost' && p.installed === false));
+});
+
+// ------------------------------------------------------------------ watermark
+
+const link = async (admin, label) => (await (await admin.post('/api/spaces/demo/links', { label })).json()).link;
+const asLink = async (t, l, p = '/') => { const c = client(t.base); const u = new URL(l.url); await c.fetch(u.pathname + u.search, { headers: DOC }); return c.fetch('/s/demo' + p, { headers: DOC }); };
+
+test('watermark: shown only to share-link viewers, document views only', async (x) => {
+  const { t, admin } = await world(x);
+  const l = await link(admin, 'Acme Corp');
+  const viaLink = await (await asLink(t, l)).text();
+  assert.match(viaLink, /Confidential — prepared for Acme Corp/);
+  assert.match(viaLink, /<\/div><\/body>/, 'before the last </body>');
+  assert.doesNotMatch(await (await admin.fetch('/s/demo/', { headers: DOC })).text(), /Confidential/, 'team member');
+  assert.equal((await (await asLink(t, l, '/a.css')).text()), 'x{}', 'subresources untouched');
+  // public viewers
+  await admin.post('/api/spaces/demo', { privacy: 'public' }, 'PATCH');
+  assert.doesNotMatch(await (await client(t.base).fetch('/s/demo/', { headers: DOC })).text(), /Confidential/);
+});
+
+test('watermark: off by default, and stored files never change', async (x) => {
+  const { t, admin } = await world(x, { enable: ['watermark'], on: [] });
+  const l = await link(admin, 'Acme');
+  assert.doesNotMatch(await (await asLink(t, l)).text(), /Confidential/);
+  await admin.post('/api/spaces/demo/plugins/watermark', { enabled: true }, 'PUT');
+  assert.match(await (await asLink(t, l)).text(), /Confidential/);
+  const sp = t.store.space('demo');
+  const f = t.store.manifest(sp.live_version_id).find((m) => m.path === 'index.html');
+  assert.equal(t.store.cas.size(f.sha256), PAGE.length);
+});
+
+test('watermark: the link label and the template are HTML-escaped', async (x) => {
+  const { t, admin } = await world(x);
+  await admin.post('/api/spaces/demo/plugins/watermark', { enabled: true, settings: { text: '<b>{client}</b> & co' } }, 'PUT');
+  const l = await link(admin, '"><script>alert(1)</script>');
+  const html = await (await asLink(t, l)).text();
+  assert.doesNotMatch(html, /<script>alert/);
+  assert.match(html, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.match(html, /&lt;b&gt;.*&lt;\/b&gt; &amp; co/);
+});
+
+// ------------------------------------------------------------------ sqlite
+
+const docToken = async (c) => /freespace-doc-token" content="([^"]+)"/.exec(await (await c.fetch('/s/demo/', { headers: DOC })).text())?.[1];
+const api = (t, tok, body, method = 'POST') => fetch(t.base + '/s/demo/_fs/db', { method, headers: { 'content-type': 'application/json', ...(tok && { 'x-fs-doc-token': tok }) }, body: JSON.stringify(body) });
+
+test('sqlite: MCP creates the database; the browser API obeys the per-table policy and the doc token', async (x) => {
+  const { t, admin } = await world(x);
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  assert.equal((await mcp(t, tok, 'db_exec', { slug: 'demo', sql: ['CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)', 'CREATE TABLE secrets (id INTEGER PRIMARY KEY, v TEXT)', "INSERT INTO secrets (v) VALUES ('x')"] })).status, 200);
+  await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { tables: { notes: 'read+insert' } } }, 'PUT');
+  const dt = await docToken(admin);
+  assert.ok(dt, 'documents get a doc token');
+
+  assert.equal((await api(t, null, { op: 'tables' })).status, 401, 'no token');
+  assert.equal((await api(t, 'bogus', { op: 'tables' })).status, 401);
+  const tables = await (await api(t, dt, { op: 'tables' })).json();
+  assert.deepEqual(tables.tables.map((x) => x.name), ['notes'], 'secrets is off, so invisible');
+  assert.equal((await api(t, dt, { op: 'insert', table: 'notes', values: { body: 'hello' } })).status, 200);
+  const rows = await (await api(t, dt, { op: 'select', table: 'notes' })).json();
+  assert.equal(rows.rows[0].body, 'hello');
+  assert.equal((await api(t, dt, { op: 'select', table: 'secrets' })).status, 404, 'an off table does not even admit it exists');
+  assert.equal((await api(t, dt, { op: 'delete', table: 'notes', where: { id: 1 } })).status, 403, 'read+insert cannot delete');
+  assert.equal((await api(t, dt, { op: 'select', table: 'notes; DROP TABLE notes' })).status >= 400, true, 'names are checked against the schema');
+  assert.equal((await api(t, dt, { sql: 'select 1' })).status >= 400, true, 'no raw SQL from the browser');
+});
+
+test('sqlite: raw SQL over MCP needs the db scope, stays in this space file, and is guarded', async (x) => {
+  const { t, admin } = await world(x);
+  const rw = await token(admin, ['publish', 'db', 'read']);
+  const noDb = await token(admin, ['publish', 'read']);
+  assert.equal((await mcp(t, noDb, 'db_exec', { slug: 'demo', sql: 'CREATE TABLE a (x)' })).status, 403);
+  await mcp(t, rw, 'db_exec', { slug: 'demo', sql: 'CREATE TABLE a (x)' });
+  assert.equal(sc(await mcp(t, rw, 'db_query', { slug: 'demo', sql: 'SELECT count(*) AS n FROM a' })).rows[0].n, 0);
+  for (const sql of ["ATTACH DATABASE '/etc/passwd' AS p", 'PRAGMA writable_schema = 1', 'VACUUM', 'DELETE FROM a; DROP TABLE a']) {
+    const r = await mcp(t, rw, 'db_exec', { slug: 'demo', sql });
+    assert.ok(r.status >= 400 || r.body.error || r.body.result?.isError, sql);
+  }
+  const w = await mcp(t, rw, 'db_query', { slug: 'demo', sql: 'DELETE FROM a' });
+  assert.ok(w.status >= 400 || w.body.error || w.body.result?.isError, 'db_query is read-only');
+  // the core tables are in another file
+  const core = await mcp(t, rw, 'db_query', { slug: 'demo', sql: 'SELECT * FROM api_keys' });
+  assert.ok(core.status >= 400 || core.body.error || core.body.result?.isError);
+});
+
+test('sqlite: a plugin tool from a space without the plugin is not found', async (x) => {
+  const { t, admin } = await world(x, { on: [] });
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  const r = await mcp(t, tok, 'db_schema', { slug: 'demo' });
+  assert.ok(r.status === 404 || r.body.error || r.body.result?.isError);
+  assert.equal((await api(t, 'x', { op: 'tables' })).status, 405, 'the route is gone: a POST falls through to static hosting');
+});
+
+async function entries(file) {
+  return withZip(file, {}, async ({ raw, open }) => {
+    const out = new Map();
+    for (const r of raw) { const parts = []; for await (const c of await open(r)) parts.push(c); out.set(r.name, Buffer.concat(parts)); }
+    return out;
+  });
+}
+const exportTo = async (admin, slug, history) => {
+  const r = await admin.fetch(`/spaces/${slug}/export${history ? '?history=1' : ''}`);
+  assert.equal(r.status, 200, await r.clone().text());
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fsx-')), 'b.zip');
+  fs.writeFileSync(f, Buffer.from(await r.arrayBuffer()));
+  return f;
+};
+
+test('sqlite: snapshots follow versions, and a database round-trips through both export zips', async (x) => {
+  const { t, admin } = await world(x);
+  await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { snapshots: 'publish' } }, 'PUT');
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: ['CREATE TABLE n (v TEXT)', "INSERT INTO n VALUES ('one')"] });
+  await admin.post('/api/spaces/demo/versions', { files: files({ 'index.html': PAGE }) });
+  const list = sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'list' }));
+  assert.equal(list.snapshots.length, 1, 'publishing took a snapshot');
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: "UPDATE n SET v = 'two'" });
+  assert.equal(sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'restore', version: list.snapshots[0].version })).restored, list.snapshots[0].version);
+  assert.equal(sc(await mcp(t, tok, 'db_query', { slug: 'demo', sql: 'SELECT v FROM n' })).rows[0].v, 'one');
+
+  const cur = await entries(await exportTo(admin, 'demo', false));
+  assert.ok([...cur.keys()].some((k) => /^plugins\/sqlite\/.*\.sqlite$/.test(k)), 'current zip carries the database');
+  assert.ok(![...cur.keys()].some((k) => k.startsWith('history/')));
+  const his = await entries(await exportTo(admin, 'demo', true));
+  assert.ok([...his.keys()].some((k) => /^history\/plugins\/sqlite\//.test(k)), 'history zip carries the snapshots');
+  assert.ok(his.has('plugins/sqlite/settings.json'));
+
+  // Import it as a new space on a fresh instance with sqlite enabled.
+  const t2 = await boot(); x.after(t2.close);
+  const a2 = await setupAdmin(t2);
+  await a2.post('/api/admin/plugins/sqlite', { enabled: true });
+  const hz = fs.readFileSync(await exportTo(admin, 'demo', true));
+  const up = await a2.fetch('/api/import?slug=copy', { method: 'POST', body: hz, headers: { 'content-type': 'application/zip', 'x-csrf-token': a2.csrf } });
+  assert.equal(up.status, 201, await up.clone().text());
+  assert.deepEqual(JSON.parse(t2.store.space('copy').plugins_json), ['sqlite', 'watermark']);
+  const tok2 = (await (await a2.post('/api/tokens', { name: 'x', spaces: ['copy'], perms: ['db', 'read'] })).json()).token;
+  const q = await (await fetch(t2.base + '/mcp', { method: 'POST', headers: { authorization: `Bearer ${tok2}`, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'db_query', arguments: { slug: 'copy', sql: 'SELECT v FROM n' } } }) })).json();
+  assert.equal(q.result.structuredContent.rows[0].v, 'one');
+});
+
+test('sqlite: an import for a plugin this instance has not enabled keeps the files and re-exports them', async (x) => {
+  const { t, admin } = await world(x);
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: ['CREATE TABLE n (v TEXT)', "INSERT INTO n VALUES ('kept')"] });
+  const zip = fs.readFileSync(await exportTo(admin, 'demo', false));
+  const t2 = await boot(); x.after(t2.close);
+  const a2 = await setupAdmin(t2); // sqlite NOT enabled here
+  const up = await a2.fetch('/api/import?slug=copy', { method: 'POST', body: zip, headers: { 'content-type': 'application/zip', 'x-csrf-token': a2.csrf } });
+  assert.equal(up.status, 201, await up.clone().text());
+  assert.ok((await up.json()).warnings.some((w) => /sqlite/.test(w)));
+  const again = await entries(await exportTo(a2, 'copy', false));
+  assert.deepEqual([...again.keys()].filter((k) => k.startsWith('plugins/sqlite/')).sort(), [...(await entries(await exportTo(admin, 'demo', false))).keys()].filter((k) => k.startsWith('plugins/sqlite/')).sort());
+});
+
+test('sqlite: snapshot blobs survive garbage collection', async (x) => {
+  const { t, admin } = await world(x);
+  await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { snapshots: 'manual' } }, 'PUT');
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: 'CREATE TABLE n (v TEXT)' });
+  await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'create' });
+  const [snap] = sc(await mcp(t, tok, 'db_checkpoint', { slug: 'demo', action: 'list' })).snapshots;
+  t.db.prepare("DELETE FROM meta WHERE key = 'last_gc'").run();
+  await t.store.maybeGc(true);
+  assert.notEqual(t.store.cas.size(snap.sha256), null);
+});
+
+test('export activity is logged', async (x) => {
+  const { t, admin } = await world(x);
+  await exportTo(admin, 'demo', false);
+  assert.ok(t.db.prepare("SELECT 1 FROM activity_log WHERE action = 'space.exported'").get());
+});
