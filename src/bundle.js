@@ -123,6 +123,7 @@ export async function exportBundle(store, space, { history = false, outFile, exp
       if (cas.size(f.sha256) === null) throw new Error(`missing blob ${f.sha256} for ${f.path}`);
       await zip.add(`site/${f.path}`, cas.stream(f.sha256));
     }
+    await store.plugins?.exportInto(space, { add: (n, c) => zip.add(n, c), history });
     if (history) {
       await zip.add('history/versions.json', versionsJson(store, space));
       for (const b of db.prepare('SELECT DISTINCT sha256 FROM manifest_files WHERE space_id = ? ORDER BY sha256').all(space.id)) {
@@ -224,7 +225,8 @@ export async function importBundle(store, cred, file, { slug: wantSlug, replace 
     const bundleSpaceId = id(sp.id, 'spc', 'space.id');
     const spaceCreated = stamp(sp.created_at, 'space.created_at');
     const spaceUpdated = sp.updated_at === undefined ? spaceCreated : stamp(sp.updated_at, 'space.updated_at');
-    if (Array.isArray(sp.plugins) && sp.plugins.length) warnings.push(`Plugin data for ${sp.plugins.map((p) => String(p).slice(0, 40)).join(', ')} was not imported (plugins are not supported yet); the space is static.`);
+    // Plugins the space uses; their files are handed over once the space exists (below the transaction).
+    const pluginNames = (Array.isArray(sp.plugins) ? sp.plugins : []).filter((n) => typeof n === 'string' && /^[a-z][a-z0-9-]{0,39}$/.test(n)).slice(0, 20);
 
     let budget = config.maxSpaceBytes;
     const storeEntry = async (n) => {
@@ -308,8 +310,15 @@ export async function importBundle(store, cred, file, { slug: wantSlug, replace 
     const used = new Set(need.values());
     const orphan = raw.filter((r) => r.name.startsWith('history/blobs/') && !used.has(r.name)).length;
     if (orphan) warnings.push(`${orphan} blob(s) in the bundle are not used by any version and were skipped.`);
-    const skipped = raw.filter((r) => r.name.startsWith('plugins/') || r.name.startsWith('history/plugins/')).length;
-    if (skipped) warnings.push(`${skipped} plugin file(s) were skipped.`);
+    const pluginFiles = {};
+    let stray = 0;
+    for (const r of raw) {
+      const m = /^(history\/)?plugins\/([^/]+)\/(.+)$/.exec(r.name);
+      if (!m) continue;
+      if (!pluginNames.includes(m[2])) { stray++; continue; }
+      (pluginFiles[m[2]] ??= []).push({ rel: m[3], history: !!m[1], open: () => open(r) });
+    }
+    if (stray) warnings.push(`${stray} file(s) for plugins the space does not list were skipped.`);
 
     // ---- activity (history bundles only; a replace keeps the existing audit trail) ----
     let activity = [];
@@ -353,7 +362,7 @@ export async function importBundle(store, cred, file, { slug: wantSlug, replace 
       if (replaced) db.prepare('UPDATE spaces SET live_version_id = ?, updated_at = ? WHERE id = ?').run(newLive, t, spaceId);
       else {
         db.prepare('INSERT INTO spaces (id,slug,name,owner_id,live_version_id,created_at,updated_at,noindex,privacy,plugins_json) VALUES (?,?,?,?,?,?,?,?,?,?)')
-          .run(spaceId, slug, name, cred.userId, newLive, spaceCreated, spaceUpdated, sp.noindex === false ? 0 : 1, privacy, '[]');
+          .run(spaceId, slug, name, cred.userId, newLive, spaceCreated, spaceUpdated, sp.noindex === false ? 0 : 1, privacy, JSON.stringify(pluginNames));
       }
       const insV = db.prepare(`INSERT INTO versions (id,space_id,number,status,routing_json,total_files,total_bytes,created_at,finalized_at,
         parent_version_id,author_credential_id,author_name,message,source,warnings_json) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
@@ -368,8 +377,14 @@ export async function importBundle(store, cred, file, { slug: wantSlug, replace 
         const insA = db.prepare('INSERT INTO activity_log (space_id,actor_kind,actor_id,action,resource_type,resource_id,detail_json,created_at) VALUES (?,?,?,?,?,?,?,?)');
         for (const a of activity) insA.run(spaceId, a.actor_kind, a.actor_id, a.action, a.resource_type, a.resource_id, a.detail, a.created_at);
       } else if (hasHistory) warnings.push("The bundle's activity log was not imported; the space keeps its own.");
+      if (replaced) {
+        db.prepare('UPDATE spaces SET plugins_json = ? WHERE id = ?').run(JSON.stringify(pluginNames), spaceId);
+        db.prepare('DELETE FROM plugin_space WHERE space_id = ?').run(spaceId);
+      }
       return { spaceId, replaced, remapped: warnings.some((w) => /already exists here/.test(w)) };
     });
+    if (result.replaced) store.plugins?.removeData({ id: result.spaceId });
+    await store.plugins?.importFrom(result.spaceId, pluginNames, pluginFiles, (w) => warnings.push(w));
     store.log(cred, 'space.imported', result.spaceId, { kind: doc.kind, versions: versions.length, replaced: result.replaced, from: bundleSpaceId, generator: isObj(doc.generator) ? String(doc.generator.name).slice(0, 40) : null }, { type: 'space', id: result.spaceId });
     store.maybeGc();
     return { space: store.spaceById(result.spaceId), versions: versions.length, warnings, remapped: result.remapped };

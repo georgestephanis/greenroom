@@ -199,6 +199,13 @@ export const MIGRATIONS = [
     const set = db.prepare('UPDATE grants SET token_hash = ?, raw_token = NULL WHERE id = ?');
     for (const g of db.prepare('SELECT id, raw_token FROM grants WHERE raw_token IS NOT NULL').all()) set.run(sha256hex(g.raw_token), g.id);
   },
+  // Plugin settings per space (core-owned; plugins reach them only through ctx.settings).
+  `CREATE TABLE plugin_space (
+    space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    plugin TEXT NOT NULL,
+    settings_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY (space_id, plugin)
+  );`,
 ];
 
 export function openDb(file) {

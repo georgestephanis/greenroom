@@ -49,7 +49,7 @@ function insufficient(cred, need) {
   return Object.assign(httpErr(403, `This credential needs scope: ${need.join(' ')}`), { insufficientScope: [...new Set([...have, ...need])].join(' ') });
 }
 
-export function createMcp({ store, db }) {
+export function createMcp({ store, db, plugins }) {
   const inScope = (cred, slug) => cred.scope.spaces === '*' || cred.scope.spaces.includes(slug);
   // A scoped credential gets the same answer for a space outside its scope and one that doesn't exist,
   // so it can't probe which slugs are taken.
@@ -128,6 +128,23 @@ export function createMcp({ store, db }) {
     },
   };
 
+  // Plugin tools join the list when an admin has enabled the plugin; core adds `slug`, checks the scope and
+  // whether the plugin is on for that space, and hands the plugin only the space and the arguments.
+  const core = new Set(TOOLS.map((t) => t.name));
+  const pluginTools = () => plugins.tools().filter((t) => !core.has(t.name) && plugins.instanceEnabled(t.plugin)).map((t) => ({
+    name: t.name, description: t.description,
+    inputSchema: obj({ ...slugArg, ...t.inputSchema.properties }, ['slug', ...(t.inputSchema.required ?? [])]),
+  }));
+  const pluginTool = (name) => {
+    const t = !core.has(name) && plugins.tool(name);
+    if (!t) return null;
+    return (cred, a) => {
+      const s = space(cred, a.slug, t.perm ?? 'read');
+      if (!plugins.active(s).includes(t.plugin)) throw httpErr(404, `The ${t.plugin} plugin is not enabled on this space`);
+      return plugins.callTool(s, t, a);
+    };
+  };
+
   /** One JSON-RPC message in, { status, body, headers } out. */
   return async function handle(cred, msg, origin) {
     const reply = (result) => ({ status: 200, body: { jsonrpc: '2.0', id: msg.id, result } });
@@ -137,9 +154,9 @@ export function createMcp({ store, db }) {
       case 'initialize': // ponytail: one supported version; answer with it whatever the client asked for
         return reply({ protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'freespace', version: '0.4.0' } });
       case 'ping': return reply({});
-      case 'tools/list': return reply({ tools: TOOLS });
+      case 'tools/list': return reply({ tools: [...TOOLS, ...pluginTools()] });
       case 'tools/call': {
-        const fn = tools[msg.params?.name];
+        const fn = tools[msg.params?.name] ?? pluginTool(msg.params?.name);
         if (!fn) return { status: 200, body: { jsonrpc: '2.0', id: msg.id, error: { code: -32602, message: 'Unknown tool' } } };
         try {
           const out = await fn(cred, msg.params.arguments || {}, origin);

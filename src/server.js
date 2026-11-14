@@ -16,6 +16,7 @@ import { importZip } from './zip.js';
 import { exportBundle, importBundle, verifyExport } from './bundle.js';
 import { newId, now, randomToken, sha256hex } from './util.js';
 import * as ui from './dashboard.js';
+import { createPlugins } from './plugins.js';
 
 const html = (res, status, body) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.statusCode = status; res.end(body); };
 const json = (res, status, obj) => { res.setHeader('Content-Type', 'application/json'); res.statusCode = status; res.end(JSON.stringify(obj)); };
@@ -41,7 +42,10 @@ export function createApp(overrides = {}) {
   const store = new Store(db, cas, config);
   const auth = new Auth(db, config);
   const oauth = new OAuth({ db, auth, config });
-  const mcp = createMcp({ store, db });
+  // Plugins: the bundled sqlite and watermark plus any in config.plugins (definitions, loaded by bin/freespace.js).
+  const plugins = createPlugins({ store, config, installed: config.plugins ?? [] });
+  store.plugins = plugins;
+  const mcp = createMcp({ store, db, plugins });
 
   // Login throttle: in memory, pruned on access (no timers). Per account+IP, 10 attempts per 15 minutes.
   // Counted before the scrypt await so parallel attempts can't slip past; a success clears it.
@@ -55,13 +59,34 @@ export function createApp(overrides = {}) {
     return false;
   };
   const clientIp = (req) => (config.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress;
-  const handleSpace = createSpaceHandler({ store, auth, config, clientIp, throttle: { hit: attempt, clear: (k) => attempts.delete(k) } });
+  const handleSpace = createSpaceHandler({ store, auth, config, clientIp, plugins, throttle: { hit: attempt, clear: (k) => attempts.delete(k) } });
   const origin = (req) => oauth.issuer(req);
   const pubLink = (req, space, g) => ({
     id: g.id, label: g.name, url: g.key ? `${origin(req)}/s/${space.slug}/?key=${g.key}` : null, hint: g.token_hint, password: !!g.secret_hash,
     expires_at: g.expires_at, max_uses: g.max_uses, uses: g.uses_count, revoked_at: g.revoked_at, disabled_at: g.disabled_at,
     active: store.linkLive(space, g), view_count: g.view_count, first_viewed_at: g.first_viewed_at, last_viewed_at: g.last_viewed_at, created_at: g.created_at,
   });
+
+  // What the dashboard and GET /api/spaces/:slug/plugins show for a space.
+  const pluginRows = (space) => {
+    const on = plugins.listed(space);
+    return [
+      ...plugins.names().map((n) => ({ ...plugins.info(n), installed: true, instance_enabled: plugins.instanceEnabled(n), enabled: on.includes(n), settings: plugins.settings(space, n), spec: plugins.spec(n) })),
+      ...on.filter((n) => !plugins.installed(n)).map((n) => ({ name: n, installed: false, instance_enabled: false, enabled: true, settings: {}, spec: {} })),
+    ];
+  };
+  const flag = (v) => (v === undefined ? undefined : v === true || v === '1' || v === 'true');
+  // The dashboard form sends one s_{key} field per setting; JSON callers send `settings` directly.
+  const formSettings = (spec, body) => {
+    const out = {};
+    for (const [k, sp] of Object.entries(spec)) {
+      const v = body[`s_${k}`];
+      if (v === undefined) continue;
+      out[k] = sp.type === 'number' ? Number(v) : sp.type === 'bool' ? flag(v)
+        : sp.type === 'map' ? Object.fromEntries(String(v).split('\n').map((l) => l.trim()).filter(Boolean).map((l) => l.split(/\s*[:=]\s*/))) : v;
+    }
+    return Object.keys(out).length ? out : undefined;
+  };
 
   const sessionCookie = (s) => `${SESSION_COOKIE}=${s.cookie}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${new Date(s.expires).toUTCString()}`;
   const clearCookie = `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
@@ -162,6 +187,12 @@ export function createApp(overrides = {}) {
       requireAdmin(cred);
       return { status: 200, body: { branding: store.setBranding(cred, body) }, next: '/instance' };
     }
+    if (a === 'admin' && b === 'plugins' && c && m === 'POST') {
+      requireAdmin(cred);
+      plugins.setInstanceEnabled(c, flag(body.enabled) ?? true);
+      store.log(cred, flag(body.enabled) === false ? 'plugin.disabled' : 'plugin.enabled', null, { plugin: c });
+      return { status: 200, body: { ok: true }, next: '/instance' };
+    }
     if (a === 'admin' && b === 'gc' && m === 'POST') {
       requireAdmin(cred);
       const r = await store.maybeGc(true);
@@ -205,6 +236,15 @@ export function createApp(overrides = {}) {
             return { status: 200, body: { space: pubSpace(store.updateSpace(cred, space, patch)) }, next: `/spaces/${space.slug}` };
           }
           if (m === 'DELETE') { requireSession(cred); store.deleteSpace(cred, space); return { status: 200, body: { ok: true }, next: '/' }; }
+        }
+        // Per-space plugin switches and settings are a person's call: session only, like sharing.
+        if (c === 'plugins' && !seg[3] && m === 'GET') return { status: 200, body: { plugins: pluginRows(space) } };
+        if (c === 'plugins' && seg[3] && ['PUT', 'PATCH', 'POST'].includes(m)) {
+          requireSession(cred);
+          const spec = plugins.spec(seg[3]);
+          plugins.configure(space, seg[3], { enabled: flag(body.enabled), settings: body.settings ?? formSettings(spec, body) });
+          store.log(cred, 'plugin.configured', space.id, { plugin: seg[3], enabled: flag(body.enabled) });
+          return { status: 200, body: { plugins: pluginRows(store.spaceById(space.id)) }, next: `/spaces/${space.slug}#plugins` };
         }
         if (c === 'versions' && m === 'GET') return { status: 200, body: { versions: store.versions(space.id).map(pubVersion) } };
         if (c === 'versions' && m === 'POST') {
@@ -329,7 +369,7 @@ export function createApp(overrides = {}) {
     }
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
     if (p === '/team') return html(res, 200, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
-    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding())); }
+    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n) })))); }
     m = /^\/spaces\/([^/]+)\/export$/.exec(p);
     if (m) {
       const space = store.space(m[1]);
@@ -349,7 +389,7 @@ export function createApp(overrides = {}) {
       const versions = store.versions(space.id);
       const live = versions.find((v) => v.id === space.live_version_id);
       const links = can(cred, 'share', space.slug) ? store.links(space).map((g) => pubLink(req, space, g)) : null;
-      return html(res, 200, ui.spacePage(cred, space, versions, live ? JSON.parse(live.warnings_json || '[]') : [], links));
+      return html(res, 200, ui.spacePage(cred, space, versions, live ? JSON.parse(live.warnings_json || '[]') : [], links, can(cred, 'publish', space.slug) ? pluginRows(space) : []));
     }
     return html(res, 404, ui.notFoundPage(cred));
   }
@@ -468,5 +508,5 @@ export function createApp(overrides = {}) {
     }
   });
   server.keepAliveTimeout = 5000;
-  return { server, store, auth, config, db };
+  return { server, store, auth, config, db, plugins };
 }

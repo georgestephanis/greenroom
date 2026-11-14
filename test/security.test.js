@@ -194,6 +194,7 @@ test('rule 6: a viewer cookie for space A is rejected on space B over HTTP', asy
 test('rule 7: the doc token goes only to documents (Sec-Fetch-Dest), never to other requests', async (x) => {
   const t = await boot(); x.after(t.close);
   await withSpace(t, 'public', { 'index.html': '<head></head>hi', 'a.css': 'x{}' });
+  t.plugins.setInstanceEnabled('sqlite', true);
   t.db.prepare(`UPDATE spaces SET plugins_json = '["sqlite"]'`).run();
   const c = client(t.base);
   const body = async (p, dest) => (await c.fetch(p, { headers: dest ? { 'sec-fetch-dest': dest } : {} })).text();

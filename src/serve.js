@@ -4,7 +4,7 @@ import { matchRule, substituteDestination, computeHeadersForPath } from './routi
 import { parseCookies, SESSION_COOKIE, verifyPassword } from './auth.js';
 import {
   applySpaceHeaders, filterTenantHeaders, viewerCookieName, signViewer, verifyViewer, viewerSetCookie,
-  signDocToken, injectDocToken, isDocumentRequest,
+  verifyDocToken, rewriteSetCookie, isDocumentRequest,
 } from './security.js';
 import { esc } from './util.js';
 
@@ -51,7 +51,7 @@ function crossSite(req) {
   return !!site && site !== 'same-origin' && site !== 'none';
 }
 
-export function createSpaceHandler({ store, auth, config, clientIp, throttle }) {
+export function createSpaceHandler({ store, auth, config, clientIp, throttle, plugins }) {
   const viewerFor = (space, cookies) => verifyViewer(config.secret, space, cookies[viewerCookieName(space)]);
 
   // A visit with ?key=: check the link, maybe the password, spend one use, set the space+link-bound
@@ -92,6 +92,47 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
     return send(res, 303, '', { 'Set-Cookie': viewerSetCookie(space, signed), Location: clean, 'Cache-Control': 'no-store' });
   }
 
+  // A plugin route under /_fs/. Core has already set the sandbox headers; here it checks the credential
+  // (a per-document token, rule 7), runs the handler, and filters what comes back (rules 2 and 5).
+  async function pluginRoute(req, res, url, space, route) {
+    const token = route.auth === 'token';
+    if (token) {
+      // Sandboxed frames have an opaque origin and send no cookies: the token is the only credential,
+      // so the CORS allowance carries no credentials and cannot be set by a plugin.
+      res.setHeader('Access-Control-Allow-Origin', 'null');
+      res.setHeader('Access-Control-Allow-Headers', 'content-type, x-fs-doc-token');
+      res.setHeader('Access-Control-Allow-Methods', route.methods.join(', '));
+      res.setHeader('Vary', 'Cookie, Origin');
+      if (req.method === 'OPTIONS') return send(res, 204, '', { 'Access-Control-Max-Age': '600' });
+    }
+    const m = req.method === 'HEAD' ? 'GET' : req.method;
+    if (!route.methods.includes(m)) return send(res, 405, 'Method not allowed', { Allow: route.methods.join(', ') });
+    if (token && !verifyDocToken(config.secret, space, req.headers['x-fs-doc-token'])) return send(res, 401, 'Document token required', { 'Cache-Control': 'no-store' });
+    let body;
+    if (m !== 'GET') {
+      let raw = '';
+      for await (const c of req) { raw += c; if (raw.length > 1024 * 1024) return send(res, 413, 'Body too large'); }
+      try { body = raw ? JSON.parse(raw) : {}; } catch { return send(res, 400, 'Body must be JSON'); }
+    }
+    let r;
+    try {
+      r = await plugins.callRoute(space, route, { req: { method: m, query: Object.fromEntries(url.searchParams) }, body });
+    } catch (e) {
+      r = { status: e.status || 500, json: { error: e.status ? e.message : 'Plugin error' } };
+      if (!e.status) console.error(`plugin ${route.plugin}:`, e.message);
+    }
+    const { kept } = filterTenantHeaders(r.headers ?? {});
+    for (const [k, v] of Object.entries(kept)) res.setHeader(k, v);
+    const cookies = rewriteSetCookie(r.cookies);
+    if (cookies.length) res.setHeader('Set-Cookie', cookies);
+    applySpaceHeaders(res, { noindex: !!space.noindex });
+    const out = r.json !== undefined ? JSON.stringify(r.json) : (r.body ?? '');
+    res.setHeader('Content-Type', r.type ?? (r.json !== undefined ? 'application/json' : 'text/plain; charset=utf-8'));
+    res.setHeader('Cache-Control', token ? 'no-store' : 'public, max-age=300');
+    res.setHeader('Content-Length', Buffer.byteLength(out));
+    return send(res, r.status ?? 200, req.method === 'HEAD' ? '' : out);
+  }
+
   return async function handleSpace(req, res, url) {
     const m = /^\/s\/([^/]+)(\/.*)?$/.exec(url.pathname);
     const method = req.method;
@@ -101,6 +142,8 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
     res.setHeader('Vary', 'Cookie');
 
     const brand = store.branding();
+    const route = space && m[2]?.startsWith('/_fs/') && plugins.route(space, m[2]);
+    if (route) return pluginRoute(req, res, url, space, route);
     const keyed = !!space && space.privacy !== 'public' && url.searchParams.has('key');
     if (method !== 'GET' && method !== 'HEAD' && !(keyed && method === 'POST')) return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
     if (!m || !space) return send(res, 404, page(brand, 'Not found', 'There is no space here.'), HTML);
@@ -111,19 +154,19 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
 
     // ---- who may view? every mode ends at the same space-bound viewer cookie (rule 6) ----
     const cookies = parseCookies(req.headers.cookie);
-    let viewedLink = null;
+    let viewedLink = null, who = { kind: 'public' }; // `who` is what plugins may know about the viewer
     if (keyed) return linkEntry(req, res, url, space, cookies, brand);
     if (space.privacy !== 'public') {
       const viewer = viewerFor(space, cookies);
       let ok = false, deadLink = false;
       // Bound to the dashboard session that minted it: logout or a removed member ends access.
-      if (viewer && viewer.kind === 'team') ok = !!auth.sessionUser(viewer.subject);
+      if (viewer && viewer.kind === 'team') ok = !!auth.sessionUser(viewer.subject) && !!(who = { kind: 'team' });
       // Bound to the link: the row is read on every request, so revoke, expiry and privacy changes are immediate.
       if (viewer && viewer.kind === 'link') {
         const g = store.link(space, viewer.subject);
         ok = store.linkLive(space, g);
         deadLink = !ok;
-        if (ok) viewedLink = g;
+        if (ok) { viewedLink = g; who = { kind: 'link', label: g.name }; }
       }
       if (!ok) {
         // The Strict dashboard cookie only arrives on same-site navigations; use it to mint a viewer cookie.
@@ -133,6 +176,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
           const signed = signViewer(config.secret, space, s.id, config.viewerMinutes * 60e3);
           res.setHeader('Set-Cookie', viewerSetCookie(space, signed));
           ok = true;
+          who = { kind: 'team' };
         }
       }
       if (!ok) {
@@ -213,10 +257,10 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
     res.setHeader('Cache-Control', cacheControl);
     res.setHeader('Accept-Ranges', 'bytes');
 
-    // Documents of spaces with the sqlite plugin on get a per-document token (rule 7).
-    const plugins = JSON.parse(space.plugins_json || '[]');
-    if (status === 200 && plugins.includes('sqlite') && file.content_type.startsWith('text/html') && isDocumentRequest(req)) {
-      const html = injectDocToken((await store.cas.read(file.sha256)).toString('utf8'), signDocToken(config.secret, space));
+    // Plugins may rewrite HTML documents at serve time (the sqlite doc token, the watermark banner).
+    // Stored files are never touched, and the response is never cached.
+    if (status === 200 && file.content_type.startsWith('text/html') && isDocumentRequest(req) && file.size <= 8 * 1024 * 1024 && plugins.hasTransforms(space)) {
+      const html = await plugins.transform(space, { html: (await store.cas.read(file.sha256)).toString('utf8'), viewer: who });
       res.setHeader('Cache-Control', 'no-store');
       return send(res, status, method === 'HEAD' ? '' : html, { 'Content-Length': Buffer.byteLength(html) });
     }

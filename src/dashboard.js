@@ -40,7 +40,7 @@ export function spacesPage(cred, spaces) {
 <button>Import</button><span class="status"></span></form><small>Takes a .freespace.zip or .freespace-history.zip exported from freespace.</small></section>`);
 }
 
-export function spacePage(cred, space, versions, warnings, links) {
+export function spacePage(cred, space, versions, warnings, links, plugins = []) {
   const live = versions.find((v) => v.id === space.live_version_id);
   const hist = versions.map((v, i) => {
     const prev = versions[i + 1];
@@ -60,6 +60,7 @@ ${warnings.length ? `<section class="card warn"><h2>Warnings on the live version
 <select name="privacy">${[['team', 'Team only'], ['link', 'Anyone with the link'], ['public', 'Public']].map(([v, l]) => `<option value="${v}"${space.privacy === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
 <button>Save</button></form><small>Team members can always view. Switching away from “Anyone with the link” pauses its links; switching back restores them. A link created while the space is team-only switches it to “Anyone with the link”; links paused earlier stay paused until you resume them.</small></section>
 ${links ? sharing(cred, space, links) : ''}
+${pluginsCard(cred, space, plugins)}
 <section class="card"><h2>History</h2><ol class="history">${hist || '<li>No versions.</li>'}</ol></section>`);
 }
 
@@ -98,7 +99,7 @@ ${links.length ? `<table><thead><tr><th>Link</th><th>Status</th><th>Uses</th><th
 <button>Create link</button></form><small>A use is spent each time a new browser opens the link. Views count page loads.</small></section>`;
 }
 
-export function instancePage(cred, stats, gc, dcr, brand) {
+export function instancePage(cred, stats, gc, dcr, brand, plugins = []) {
   return layout('Instance', cred, `<h1>Instance</h1><ul><li>${stats.spaces} spaces, ${stats.versions} versions, ${stats.users} people</li><li>${fmtBytes(stats.bytesReferenced)} referenced in blob storage</li></ul>
 ${gc ? `<p class="ok">GC removed ${gc.removed} file(s), freed ${fmtBytes(gc.freed)}.</p>` : ''}
 <form method="post" action="/api/admin/gc">${hidden(cred)}<input type="hidden" name="_next" value="/instance?gc=1"><button>Run GC</button></form>
@@ -108,7 +109,30 @@ ${gc ? `<p class="ok">GC removed ${gc.removed} file(s), freed ${fmtBytes(gc.free
 <section class="card"><h2>Branding</h2><p>Shown to clients on the password, not-found and expired-link pages.</p>
 <form method="post" action="/api/admin/branding">${hidden(cred)}<label>Agency name <input name="name" value="${esc(brand.name)}" maxlength="100"></label>
 <label>Logo URL <input type="url" name="logo" value="${esc(brand.logo)}" placeholder="https://…"></label>
-<label>Accent colour <input type="color" name="accent" value="${esc(brand.accent || '#1a73e8')}"></label><button>Save branding</button></form></section>`);
+<label>Accent colour <input type="color" name="accent" value="${esc(brand.accent || '#1a73e8')}"></label><button>Save branding</button></form></section>
+<section class="card"><h2>Plugins</h2><p>Installed plugins are off until you turn them on here; each space then opts in on its own page.</p><ul>${plugins.map((p) => `<li><strong>${esc(p.name)}</strong> ${esc(p.version)} \u2014 ${esc(p.description)}
+<form method="post" action="/api/admin/plugins/${esc(p.name)}" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${p.on ? '0' : '1'}"><button class="link">${p.on ? 'Turn off' : 'Turn on'}</button></form></li>`).join('')}</ul></section>`);
+}
+
+// A generic form per plugin, drawn from its spaceSettings spec. A plugin on the space but not installed
+// here keeps its data; this just says so.
+function pluginsCard(cred, space, rows) {
+  const shown = rows.filter((p) => p.enabled || p.instance_enabled);
+  if (!shown.length) return '';
+  const input = (p, k, sp) => {
+    const v = p.settings[k], n = `s_${k}`;
+    if (sp.type === 'enum') return `<select name="${n}">${sp.values.map((o) => `<option${o === v ? ' selected' : ''}>${esc(o)}</option>`).join('')}</select>`;
+    if (sp.type === 'bool') return `<select name="${n}"><option value="1"${v ? ' selected' : ''}>Yes</option><option value="0"${v ? '' : ' selected'}>No</option></select>`;
+    if (sp.type === 'number') return `<input type="number" name="${n}" value="${esc(v)}" min="${sp.min ?? ''}" max="${sp.max ?? ''}">`;
+    if (sp.type === 'map') return `<textarea name="${n}" rows="4" placeholder="table: read">${esc(Object.entries(v ?? {}).map(([a, b]) => `${a}: ${b}`).join('\n'))}</textarea>`;
+    return `<input name="${n}" value="${esc(v)}" maxlength="${sp.max ?? 200}">`;
+  };
+  return `<section class="card" id="plugins"><h2>Plugins</h2>${shown.map((p) => !p.installed
+    ? `<p class="warn"><strong>${esc(p.name)}</strong> is on for this space but not installed on this instance. Its data is kept; it works again once an admin installs and enables it.</p>`
+    : `<form method="post" action="/api/spaces/${esc(space.slug)}/plugins/${esc(p.name)}">${hidden(cred)}<input type="hidden" name="_method" value="PUT"><input type="hidden" name="_next" value="/spaces/${esc(space.slug)}#plugins">
+<h3>${esc(p.name)}</h3><small>${esc(p.description)}</small>
+<label>Enabled <select name="enabled"><option value="1"${p.enabled ? ' selected' : ''}>On</option><option value="0"${p.enabled ? '' : ' selected'}>Off</option></select></label>
+${Object.entries(p.spec).map(([k, sp]) => `<label>${esc(sp.label || k)} ${input(p, k, sp)}</label>`).join('')}<button>Save</button></form>`).join('')}</section>`;
 }
 
 export const messagePage = (cred, title, msg) => layout(title, cred, `<section class="card narrow"><h1>${esc(title)}</h1><p>${esc(msg)}</p></section>`, { nav: false });

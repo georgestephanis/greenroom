@@ -203,6 +203,7 @@ export class Store {
 
   deleteSpace(cred, space) {
     this.log(cred, 'space.deleted', null, { slug: space.slug, id: space.id });
+    this.plugins?.emit('space.deleted', { space }).then(() => this.plugins.removeData(space)); // hooks first, then the plugin data
     this.db.prepare('DELETE FROM spaces WHERE id = ?').run(space.id); // blobs reclaimed by lazy GC
     this.maybeGc();
   }
@@ -276,6 +277,7 @@ export class Store {
       return n;
     });
     this.log(cred, 'version.created', space.id, { number, source, files: list.length }, { type: 'version', id });
+    await this.plugins?.emit('version.created', { space: this.spaceById(space.id), number });
     this.maybeGc();
     return { ...this.version(space.id, number), warnings: routing.warnings };
   }
@@ -350,6 +352,7 @@ export class Store {
     this.db.prepare('DELETE FROM sessions WHERE expires_at < ? OR revoked_at IS NOT NULL').run(t);
     this.db.prepare('DELETE FROM invites WHERE expires_at < ?').run(t);
     const active = new Set(this.db.prepare('SELECT DISTINCT sha256 FROM manifest_files').all().map((r) => r.sha256));
+    for (const sha of this.plugins?.keepBlobs() ?? []) active.add(sha); // e.g. sqlite snapshots
     // Fire and forget: the result only matters to the dashboard button, which awaits `gcPromise`.
     const used = this.db.prepare('SELECT 1 FROM manifest_files WHERE sha256 = ? LIMIT 1');
     this.gcPromise = this.cas.gc(active, undefined, (sha) => !!used.get(sha)).catch(() => ({ removed: 0, freed: 0 }));
