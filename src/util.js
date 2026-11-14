@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { domainToASCII } from 'node:url';
 
 export const now = () => new Date().toISOString();
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -43,3 +44,23 @@ export function cleanPath(p) {
   return parts.join('/');
 }
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+
+// Strict address handling for signup and mail (section 6): one @, a dot-atom local part (no quoted
+// forms), and a domain lowercased to its ASCII (punycode) form. One trailing dot is dropped.
+export function normDomain(d) {
+  let s = String(d ?? '').trim();
+  if (s.endsWith('.')) s = s.slice(0, -1);
+  if (!s || s.length > 253 || /[\s@/\\:[\]]/.test(s)) return null;
+  const a = domainToASCII(s); // '' when not a valid IDN
+  const labels = a.split('.');
+  if (labels.length < 2 || !labels.every((l) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(l)) || /^\d+$/.test(labels.at(-1))) return null;
+  return a;
+}
+export function normEmail(e) {
+  const s = String(e ?? '').trim();
+  const parts = s.split('@');
+  if (s.length > 254 || parts.length !== 2 || parts[0].length > 64) return null;
+  if (!/^[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/i.test(parts[0])) return null;
+  const d = normDomain(parts[1]);
+  return d ? `${parts[0].toLowerCase()}@${d}` : null;
+}
