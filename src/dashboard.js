@@ -22,7 +22,7 @@ const hidden = (cred) => (cred?.csrf ? `<input type="hidden" name="_csrf" value=
 
 export function authPage(title, cred, error, fields, action, button, extra = '') {
   return layout(title, cred, `<section class="card narrow"><h1>${esc(title)}</h1>${error ? `<p class="error">${esc(error)}</p>` : ''}
-<form method="post" action="${action}">${extra}${fields}<button>${esc(button)}</button></form></section>`, { nav: false });
+<form method="post" action="${action}">${hidden(cred)}${extra}${fields}<button>${esc(button)}</button></form></section>`, { nav: false });
 }
 const field = (name, label, type = 'text', attrs = '') => `<label>${esc(label)}<input name="${name}" type="${type}" ${attrs} required></label>`;
 export const loginFields = field('email', 'Email', 'email', 'autocomplete="username"') + field('password', 'Password', 'password', 'autocomplete="current-password"');
@@ -74,9 +74,9 @@ ${!d.added.length && !d.removed.length && !d.changed.length ? '<p>No differences
 
 export const signupFields = field('name', 'Your name') + field('password', 'Password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
 // One page for every outcome: allowed, not allowed and already registered all read "check your inbox".
-export const signupPage = (sent, error) => (sent
+export const signupPage = (cred, sent, error) => (sent
   ? messagePage(null, 'Check your inbox', 'If that address can sign up here, we have sent it a link. It is valid for 30 minutes.')
-  : authPage('Sign up', null, error, field('email', 'Work email', 'email', 'autocomplete="email"'), '/api/signup', 'Send me a link'));
+  : authPage('Sign up', cred, error, field('email', 'Work email', 'email', 'autocomplete="email"'), '/api/signup', 'Send me a link'));
 
 export function teamPage(cred, users, invites, created) {
   return layout('Team', cred, `<h1>Team</h1>

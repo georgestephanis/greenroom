@@ -129,8 +129,9 @@ export function createApp(overrides = {}) {
     }
     if (a === 'invites' && b === 'accept' && m === 'POST') {
       const inv = db.prepare('SELECT * FROM invites WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').get(sha256hex(String(body.token || '')), now());
+      // The inviter is a live constraint like any granter: a deactivated or lapsed admin's invites are dead.
       // Claim before the (slow) scrypt await, so parallel accepts can't each create an account.
-      if (!inv || db.prepare('UPDATE invites SET used_at = ? WHERE id = ? AND used_at IS NULL').run(now(), inv.id).changes !== 1) throw httpErr(400, 'This invite is invalid or has expired');
+      if (!inv || !auth.activeUser(inv.created_by) || db.prepare('UPDATE invites SET used_at = ? WHERE id = ? AND used_at IS NULL').run(now(), inv.id).changes !== 1) throw httpErr(400, 'This invite is invalid or has expired');
       let u;
       try { u = await auth.createUser({ email: body.email, password: body.password, role: inv.role, name: body.name }); }
       catch (e) { db.prepare('UPDATE invites SET used_at = NULL WHERE id = ?').run(inv.id); throw e; }
@@ -179,9 +180,11 @@ export function createApp(overrides = {}) {
       const u = db.prepare('SELECT * FROM users WHERE id = ?').get(b);
       if (!u) throw httpErr(404, 'No such user');
       if (c === 'deactivate') {
-        if (u.role === 'admin' && !u.disabled_at && !db.prepare("SELECT 1 FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id != ?").get(b)) throw httpErr(400, 'The last active admin cannot be deactivated');
+        const others = db.prepare("SELECT id FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id != ?").all(b);
+        if (u.role === 'admin' && !u.disabled_at && !others.some((o) => auth.activeUser(o.id))) throw httpErr(400, 'The last active admin cannot be deactivated');
         db.prepare('UPDATE users SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?').run(now(), b);
         db.prepare('UPDATE sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?').run(now(), b); // reactivation won't revive them
+        db.prepare('UPDATE invites SET used_at = ? WHERE created_by = ? AND used_at IS NULL').run(now(), b); // nor their open invites
       } else db.prepare('UPDATE users SET disabled_at = NULL WHERE id = ?').run(b);
       store.log(cred, `user.${c}d`, null, { user: b });
       return { status: 200, body: { ok: true }, next: b === cred.userId ? '/login' : '/team' };
@@ -366,11 +369,11 @@ export function createApp(overrides = {}) {
     if (p === '/setup') return auth.userCount() ? redirect(res, '/login', 302) : html(res, 200, ui.authPage('Set up freespace', null, url.searchParams.get('error'), ui.setupFields, '/api/setup', 'Create admin account'));
     let m = /^\/invite\/([\w-]+)$/.exec(p);
     if (m) return html(res, 200, ui.authPage('Join the team', null, url.searchParams.get('error'), ui.setupFields, '/api/invites/accept', 'Join', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
-    if (p === '/signup') return people.signupOpen() ? html(res, 200, ui.signupPage(url.searchParams.get('sent'), url.searchParams.get('error'))) : html(res, 404, ui.messagePage(null, 'Not available', 'Self-signup is not turned on here. Ask an admin for an invite.'));
+    if (p === '/signup') return people.signupOpen() ? html(res, 200, ui.signupPage(cred, url.searchParams.get('sent'), url.searchParams.get('error'))) : html(res, 404, ui.messagePage(null, 'Not available', 'Self-signup is not turned on here. Ask an admin for an invite.'));
     m = /^\/signup\/([\w-]+)$/.exec(p);
-    if (m) return html(res, 200, ui.authPage('Create your account', null, url.searchParams.get('error') || (people.peek('signup', m[1]) ? null : 'This link is invalid or has expired'), ui.signupFields, '/api/signup/complete', 'Create account', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
+    if (m) return html(res, 200, ui.authPage('Create your account', cred, url.searchParams.get('error') || (people.peek('signup', m[1]) ? null : 'This link is invalid or has expired'), ui.signupFields, '/api/signup/complete', 'Create account', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     m = /^\/confirm\/([\w-]+)$/.exec(p); // a button, not a GET side effect, so mail scanners can't spend the link
-    if (m) return html(res, 200, ui.authPage('Confirm your email', null, url.searchParams.get('error') || (people.peek('reconfirm', m[1]) ? null : 'This link is invalid or has expired'), '', '/api/confirm', 'Confirm', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
+    if (m) return html(res, 200, ui.authPage('Confirm your email', cred, url.searchParams.get('error') || (people.peek('reconfirm', m[1]) ? null : 'This link is invalid or has expired'), '', '/api/confirm', 'Confirm', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     if (!cred || cred.type !== 'session') {
       if (!auth.userCount()) return redirect(res, '/setup', 302);
       return redirect(res, `/login?next=${encodeURIComponent(p + url.search)}`, 302);
