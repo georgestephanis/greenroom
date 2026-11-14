@@ -72,7 +72,8 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
       if (g.secret_hash) {
         // Per link+IP (clientIp honours trustProxy), counted before the scrypt await.
         const tkey = `link|${g.id}|${clientIp(req)}`;
-        if (throttle.hit(tkey)) return send(res, 429, form('Too many attempts. Try again in a few minutes.'), { ...HTML, 'Retry-After': '900' });
+        // Plus a cap per link across all IPs, so a botnet can't guess in parallel. ponytail: in memory, per process.
+        if (throttle.hit(tkey) || throttle.hit(`link|${g.id}`, 50, 3600e3)) return send(res, 429, form('Too many attempts. Try again in a few minutes.'), { ...HTML, 'Retry-After': '900' });
         const pw = await formPassword(req);
         if (!pw || !(await verifyPassword(pw, g.secret_hash))) return send(res, 401, form('That password is not right.'), HTML);
         throttle.clear(tkey);

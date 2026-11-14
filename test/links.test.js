@@ -136,6 +136,18 @@ test('password links: form, wrong password, brute-force throttle per link and IP
   assert.equal((await v.fetch('/s/alpha/a.css')).status, 200);
 });
 
+test('password links: at least 8 characters; about 50 failures an hour across all IPs locks the link', async (x) => {
+  const { t, admin, link } = await world(x, { trustProxy: true });
+  assert.equal((await admin.post('/api/spaces/alpha/links', { password: 'short' })).status, 400);
+  const l = await link('alpha', { password: 'opensesame' });
+  const tryPw = (password, i) => client(t.base).fetch(path(l.url), {
+    method: 'POST', body: new URLSearchParams({ password }).toString(),
+    headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': `198.51.100.${i}` },
+  });
+  for (let i = 0; i < 50; i++) assert.equal((await tryPw('nope', i)).status, 401);
+  assert.equal((await tryPw('opensesame', 200)).status, 429, 'a fresh IP is refused once the link is locked');
+});
+
 test('team members load team-only subresources; link spaces still admit members', async (x) => {
   const { t, admin, link } = await world(x);
   const d = await admin.fetch('/s/beta/', { headers: DOC });
@@ -170,7 +182,7 @@ test('branding shows on the password, 404 and expired pages; bad values are refu
   assert.equal((await admin.post('/api/admin/branding', { name: 'Acme', logo: 'javascript:alert(1)' })).status, 400);
   assert.equal((await admin.post('/api/admin/branding', { name: 'Acme', accent: 'red;}' })).status, 400);
   assert.equal((await admin.post('/api/admin/branding', { name: 'Acme <Studio>', logo: 'https://acme.example/logo.png', accent: '#ff0066' })).status, 200);
-  const l = await link('alpha', { password: 'pw' });
+  const l = await link('alpha', { password: 'long enough' });
   const pages = [await client(t.base).fetch(path(l.url)), await client(t.base).fetch('/s/nope/'), await client(t.base).fetch('/s/alpha/?key=sfl_x')];
   assert.deepEqual(pages.map((p) => p.status), [200, 404, 410]);
   assert.match(await (await admin.fetch('/instance')).text(), /value="Acme &lt;Studio&gt;"/);

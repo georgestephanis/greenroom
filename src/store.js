@@ -110,7 +110,7 @@ export class Store {
       max = Number(max_uses);
       if (!Number.isInteger(max) || max < 1) throw httpErr(400, 'max_uses must be a positive whole number');
     }
-    if (password && String(password).length > 1024) throw httpErr(400, 'Password too long');
+    if (password && (String(password).length < 8 || String(password).length > 1024)) throw httpErr(400, 'Password must be 8 to 1024 characters');
     const hash = password ? await hashPassword(String(password)) : null;
     const id = newId('grt'), key = 'sfl_' + randomToken(24), t = now();
     // ponytail: the raw key is stored (as homefast does) so the dashboard can show the URL again.

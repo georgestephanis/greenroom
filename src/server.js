@@ -45,12 +45,12 @@ export function createApp(overrides = {}) {
   // Login throttle: in memory, pruned on access (no timers). Per account+IP, 10 attempts per 15 minutes.
   // Counted before the scrypt await so parallel attempts can't slip past; a success clears it.
   const attempts = new Map();
-  const attempt = (key) => {
+  const attempt = (key, max = 10, windowMs = 15 * 60e3) => {
     const t = Date.now();
     if (attempts.size > 1000) for (const [k, v] of attempts) if (v.reset < t) attempts.delete(k);
     const f = attempts.get(key);
-    if (f && f.reset > t) return ++f.n > 10;
-    attempts.set(key, { n: 1, reset: t + 15 * 60e3 });
+    if (f && f.reset > t) return ++f.n > max;
+    attempts.set(key, { n: 1, reset: t + windowMs });
     return false;
   };
   const clientIp = (req) => (config.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress;
