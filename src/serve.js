@@ -34,6 +34,12 @@ async function formPassword(req) {
   return new URLSearchParams(raw).get('password');
 }
 
+function withoutKey(url) {
+  const q = new URLSearchParams(url.search);
+  q.delete('key');
+  return url.pathname + (q.size ? `?${q}` : '');
+}
+
 // The Open and password forms post from our own sandboxed page, so the browser sends Origin: null and
 // Sec-Fetch-Site: cross-site; allow that, refuse a real foreign origin or a cross-site POST without one.
 // ponytail: a sandboxed iframe elsewhere also sends Origin: null; add an HMAC form token if that matters.
@@ -51,9 +57,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
   // A visit with ?key=: check the link, maybe the password, spend one use, set the space+link-bound
   // cookie, then redirect to the URL without the key (section 6).
   async function linkEntry(req, res, url, space, cookies, brand) {
-    const q = new URLSearchParams(url.search);
-    q.delete('key');
-    const clean = url.pathname + (q.size ? `?${q}` : '');
+    const clean = withoutKey(url);
     const gone = () => send(res, 410, page(brand, 'This link is no longer active', 'It may have expired or been switched off. Ask whoever sent it for a new one.'), HTML);
     let g = store.linkByKey(space, url.searchParams.get('key'));
     if (!store.linkLive(space, g)) return gone();
@@ -101,6 +105,9 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
     if (method !== 'GET' && method !== 'HEAD' && !(keyed && method === 'POST')) return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });
     if (!m || !space) return send(res, 404, page(brand, 'Not found', 'There is no space here.'), HTML);
     if (!m[2]) return send(res, 308, '', { Location: `/s/${slug}/${url.search}` });
+    if (space.privacy === 'public' && url.searchParams.has('key')) { // no key needed: drop it from the address bar and logs
+      return send(res, 303, '', { Location: withoutKey(url), 'Cache-Control': 'no-store' });
+    }
 
     // ---- who may view? every mode ends at the same space-bound viewer cookie (rule 6) ----
     const cookies = parseCookies(req.headers.cookie);

@@ -205,6 +205,9 @@ test('creating a link on a team space enables only that link; a person resumes t
   assert.equal((await admin.post(`/api/spaces/alpha/links/${old.id}/resume`, {})).status, 200);
   assert.equal((await v.fetch(path(old.url))).status, 303);
   assert.equal((await admin.post('/api/spaces/beta', { privacy: 'public' }, 'PATCH')).status, 200);
+  const k = await client(t.base).fetch('/s/beta/?x=1&key=sfl_anything');
+  assert.equal(k.status, 303, 'a Public space strips ?key= too');
+  assert.equal(k.headers.get('location'), '/s/beta/?x=1');
   const r = await admin.post('/api/spaces/beta/links', {});
   assert.equal(r.status, 409);
   assert.match(await r.text(), /Public/);
