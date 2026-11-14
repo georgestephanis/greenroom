@@ -9,7 +9,7 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 - **One file of state**: SQLite (`node:sqlite`) plus a blob directory. No native dependencies, no timers, no background workers.
 - Node 24+, GPL-3.0-or-later.
 
-This release covers milestones M0–M2: the core, plus OAuth and MCP. Share links and the "Anyone with the link" mode (M3), export (M4) and a publishing CLI are not built yet.
+This release covers milestones M0–M3: the core, OAuth and MCP, and client sharing (share links, passwords, expiry, view tracking, branding). Export (M4), subdomain mode and a publishing CLI are not built yet.
 
 ## Run it
 
@@ -42,11 +42,23 @@ Spaces share one origin with the dashboard, so isolation is enforced by headers,
 7. Per-document write tokens for the future data API are injected into documents only.
 8. The dashboard's preview iframe has a `sandbox` attribute without `allow-same-origin`.
 
+Rule 5 has nothing to rewrite yet: core sets no tenant cookies, and plugins that could arrive with M5.
+
 Trade-offs you will notice: pages can't use their own `localStorage` or cookies (they're sandboxed), and absolute paths like `/app.css` must become relative (`app.css`) or be mapped with `_redirects`.
+
+## Who can view a space
+
+Each space is **Team only** (the default), **Anyone with the link**, or **Public**. Team members can always view.
+
+- **Team only.** Opening a space while signed in sets a short-lived viewer cookie (`FREESPACE_VIEWER_MINUTES`, default 60) bound to the space and the dashboard session, because the Strict dashboard cookie doesn't reach sandboxed subresource requests. Signing out ends it.
+- **Anyone with the link.** Each space can have several links, each with a label, optional expiry, password and max uses. Opening `/s/{slug}/?key=…` checks the link, sets a viewer cookie bound to the space and that link (`Path=/s/{slug}/; HttpOnly; Secure; SameSite=None`), then redirects to the URL without the key. The cookie lasts until the link expires or the session length (`FREESPACE_SESSION_DAYS`, default 30), whichever is sooner. The link row is checked on every request, so revoking or expiring a link cuts off its cookies at once. A use is spent when a cookie is issued, not per view. Password attempts are limited to 10 per 15 minutes per link and client IP. Each link records `first_viewed_at`, `last_viewed_at` and `view_count`.
+- **Public.** No check. `X-Robots-Tag: noindex` is on unless you turn off "hide from search engines".
+
+Switching a space away from "Anyone with the link" pauses its links; switching back restores them with their counts. The password, not-found and expired-link pages use the instance branding (agency name, logo URL, accent colour) set on the Instance page.
 
 ## Agents: MCP and OAuth
 
-The MCP endpoint is `POST /mcp` (Streamable HTTP, JSON responses). Tools: `list_spaces`, `get_space`, `create_space`, `publish`, `read_file`, `list_versions`, `diff_versions`, `rollback`.
+The MCP endpoint is `POST /mcp` (Streamable HTTP, JSON responses). Tools: `list_spaces`, `get_space`, `create_space`, `publish`, `read_file`, `list_versions`, `diff_versions`, `rollback`, `create_share_link`, `revoke_share_link` (both need `share`; creating a link switches a team-only space to "Anyone with the link").
 
 Every way in — dashboard session, OAuth access token, pasted `fsa_` token — resolves to one credential object before any route runs, and every check reads only that.
 

@@ -398,3 +398,35 @@ test('read_file: binary comes back as base64; files over 5 MB are refused', asyn
     assert.match(huge.content[0].text, /too large/);
   } finally { t.close(); }
 });
+
+test('share links over MCP need the share scope; an agent can reach link mode but never Public', async () => {
+  const { t, ada } = await world();
+  try {
+    const noShare = (await connect(t, ada, { spaces: ['alpha'], perms: ['read', 'publish'] })).access_token;
+    const denied = await call(t, noShare, 'create_share_link', { slug: 'alpha' });
+    assert.equal(denied.status, 403);
+    assert.match(denied.www, /insufficient_scope.*scope="space:alpha read publish share"/, 'the hint keeps what the grant has');
+
+    const { access_token } = await connect(t, ada, { spaces: ['alpha'], perms: ['read', 'publish', 'share'] });
+    const made = await call(t, access_token, 'create_share_link', { slug: 'alpha', label: 'Acme', max_uses: 3 });
+    const { link } = made.body.result.structuredContent;
+    assert.match(link.url, /\/s\/alpha\/\?key=sfl_/);
+    assert.equal(t.store.space('alpha').privacy, 'link');
+    const h = { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' };
+    const patch = (privacy) => fetch(t.base + '/api/spaces/alpha', { method: 'PATCH', headers: h, body: JSON.stringify({ privacy }) });
+    assert.equal((await patch('public')).status, 403, 'Public needs a person');
+    assert.equal((await patch('team')).status, 200);
+    assert.equal((await patch('link')).status, 200);
+    assert.equal(t.store.space('alpha').privacy, 'link');
+    const rev = await call(t, access_token, 'revoke_share_link', { slug: 'alpha', id: link.id });
+    assert.ok(rev.body.result.structuredContent.link.revoked_at);
+    // Out-of-scope space: no link there either.
+    const beta = await call(t, access_token, 'create_share_link', { slug: 'beta' });
+    assert.equal(beta.status, 403);
+    const missing = await call(t, access_token, 'create_share_link', { slug: 'no-such' });
+    assert.equal(missing.status, 403, 'a missing space looks like an out-of-scope one');
+    assert.equal(missing.body.error.message.replace('no-such', 'beta'), beta.body.error.message);
+    const log = t.db.prepare("SELECT actor_kind FROM activity_log WHERE action = 'link.created'").get();
+    assert.equal(log.actor_kind, 'oauth');
+  } finally { t.close(); }
+});

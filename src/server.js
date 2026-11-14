@@ -39,7 +39,6 @@ export function createApp(overrides = {}) {
   const cas = new CAS(config.blobsDir, config.tmpDir);
   const store = new Store(db, cas, config);
   const auth = new Auth(db, config);
-  const handleSpace = createSpaceHandler({ store, auth, config });
   const oauth = new OAuth({ db, auth, config });
   const mcp = createMcp({ store, db });
 
@@ -55,6 +54,13 @@ export function createApp(overrides = {}) {
     return false;
   };
   const clientIp = (req) => (config.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress;
+  const handleSpace = createSpaceHandler({ store, auth, config, clientIp, throttle: { hit: attempt, clear: (k) => attempts.delete(k) } });
+  const origin = (req) => oauth.issuer(req);
+  const pubLink = (req, space, g) => ({
+    id: g.id, label: g.name, url: `${origin(req)}/s/${space.slug}/?key=${g.raw_token}`, password: !!g.secret_hash,
+    expires_at: g.expires_at, max_uses: g.max_uses, uses: g.uses_count, revoked_at: g.revoked_at, disabled_at: g.disabled_at,
+    active: store.linkLive(space, g), view_count: g.view_count, first_viewed_at: g.first_viewed_at, last_viewed_at: g.last_viewed_at, created_at: g.created_at,
+  });
 
   const sessionCookie = (s) => `${SESSION_COOKIE}=${s.cookie}; Path=/; HttpOnly; Secure; SameSite=Strict; Expires=${new Date(s.expires).toUTCString()}`;
   const clearCookie = `${SESSION_COOKIE}=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0`;
@@ -151,6 +157,10 @@ export function createApp(overrides = {}) {
       oauth.setDcr(body.enabled === '1' || body.enabled === true);
       return { status: 200, body: { enabled: oauth.dcrEnabled() }, next: '/instance' };
     }
+    if (a === 'admin' && b === 'branding' && m === 'POST') {
+      requireAdmin(cred);
+      return { status: 200, body: { branding: store.setBranding(cred, body) }, next: '/instance' };
+    }
     if (a === 'admin' && b === 'gc' && m === 'POST') {
       requireAdmin(cred);
       const r = await store.maybeGc(true);
@@ -166,15 +176,30 @@ export function createApp(overrides = {}) {
           return { status: 201, body: { space: pubSpace(s) }, next: body._next === '__space__' ? `/spaces/${s.slug}` : undefined };
         }
       } else {
-        const perm = m === 'GET' ? null : 'publish';
+        const perm = m === 'GET' || c === 'links' ? null : 'publish';
         const space = slugSpace(cred, b, perm);
+        if (c === 'links') {
+          if (!can(cred, 'share', space.slug)) throw httpErr(403, 'Your credential cannot manage share links here');
+          const next = `/spaces/${space.slug}#sharing`;
+          if (!seg[3] && m === 'GET') return { status: 200, body: { links: store.links(space).map((g) => pubLink(req, space, g)) } };
+          if (!seg[3] && m === 'POST') {
+            const g = await store.createLink(cred, space, { label: body.label, expires_at: body.expires_at, password: body.password, max_uses: body.max_uses });
+            return { status: 201, body: { link: pubLink(req, store.spaceById(space.id), g) }, next };
+          }
+          if (seg[3] && seg[4] === 'revoke' && m === 'POST') return { status: 200, body: { link: pubLink(req, space, store.revokeLink(cred, space, seg[3])) }, next };
+          throw httpErr(404, 'Not found');
+        }
         if (!c) {
           if (m === 'GET') return { status: 200, body: { space: pubSpace(space) } };
           if (m === 'PATCH') {
             const patch = {};
             for (const k of ['name', 'slug', 'noindex']) if (body[k] !== undefined) patch[k] = body[k];
-            if (body.privacy !== undefined) { requireSession(cred); patch.privacy = body.privacy; } // making Public is escalation
-            return { status: 200, body: { space: pubSpace(store.updateSpace(cred, space, patch)) } };
+            if (body.privacy !== undefined) {
+              if (body.privacy === 'public') requireSession(cred); // making Public is a person's decision (section 6)
+              else if (!can(cred, 'share', space.slug)) throw httpErr(403, 'Your credential cannot change sharing here');
+              patch.privacy = body.privacy;
+            }
+            return { status: 200, body: { space: pubSpace(store.updateSpace(cred, space, patch)) }, next: `/spaces/${space.slug}` };
           }
           if (m === 'DELETE') { requireSession(cred); store.deleteSpace(cred, space); return { status: 200, body: { ok: true }, next: '/' }; }
         }
@@ -255,7 +280,7 @@ export function createApp(overrides = {}) {
     }
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
     if (p === '/team') return html(res, 200, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
-    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled())); }
+    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding())); }
     m = /^\/spaces\/([^/]+)(\/diff)?$/.exec(p);
     if (m) {
       const space = store.space(m[1]);
@@ -268,7 +293,8 @@ export function createApp(overrides = {}) {
       }
       const versions = store.versions(space.id);
       const live = versions.find((v) => v.id === space.live_version_id);
-      return html(res, 200, ui.spacePage(cred, space, versions, live ? JSON.parse(live.warnings_json || '[]') : []));
+      const links = can(cred, 'share', space.slug) ? store.links(space).map((g) => pubLink(req, space, g)) : null;
+      return html(res, 200, ui.spacePage(cred, space, versions, live ? JSON.parse(live.warnings_json || '[]') : [], links));
     }
     return html(res, 404, ui.notFoundPage(cred));
   }
@@ -312,7 +338,7 @@ export function createApp(overrides = {}) {
     // Resolve again now the body is in: a grant revoked or re-consented while it trickled in must win.
     const cred = resolve();
     if (!cred) return unauthorized();
-    const r = await mcp(cred, msg);
+    const r = await mcp(cred, msg, oauth.issuer(req));
     if (r.insufficientScope) res.setHeader('WWW-Authenticate', challenge(`, error="insufficient_scope", scope="${r.insufficientScope}"`));
     if (!r.body) { res.statusCode = r.status; return res.end(); }
     return json(res, r.status, r.body);

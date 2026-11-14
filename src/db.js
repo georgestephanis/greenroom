@@ -185,6 +185,12 @@ const MIGRATIONS = [
     created_at TEXT NOT NULL
   );
   `,
+  // M3: share links. The key lookup is one indexed read per request (section 6); last_viewed_at is
+  // freespace-only view tracking next to first_viewed_at and view_count.
+  `
+  ALTER TABLE grants ADD COLUMN last_viewed_at TEXT;
+  CREATE INDEX idx_grants_token ON grants(raw_token);
+  `,
 ];
 
 export function openDb(file) {

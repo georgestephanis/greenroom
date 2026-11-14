@@ -1,11 +1,13 @@
 // Spaces, versions, manifests. A version row is a "commit", a manifest is a "tree", a CAS blob is a
 // "file" (issue #214 section 5). Versions are immutable; "live" is a pointer.
 import { tx } from './db.js';
-import { httpErr, authorName, authorId } from './auth.js';
-import { newId, now, SLUG_RE, slugify, cleanPath, contentType } from './util.js';
+import { httpErr, authorName, authorId, hashPassword } from './auth.js';
+import { newId, now, randomToken, SLUG_RE, slugify, cleanPath, contentType } from './util.js';
 import { parseRedirectsFile, parseHeadersFile } from './routing.js';
 
 const META_FILES = 256 * 1024;
+const PRIVACY = ['team', 'link', 'public'];
+const LINK_KINDS = "('share_link','password')";
 
 export class Store {
   constructor(db, cas, config) {
@@ -58,16 +60,105 @@ export class Store {
       sets.push('slug = ?'); vals.push(patch.slug);
     }
     if (patch.privacy !== undefined) {
-      // 'link' arrives with M3; agents may never make a space public (checked by the caller via requireSession).
-      if (!['team', 'public'].includes(patch.privacy)) throw httpErr(400, 'privacy must be team or public');
+      // Agents may never make a space public: the caller checks that with requireSession.
+      if (!PRIVACY.includes(patch.privacy)) throw httpErr(400, 'privacy must be team, link or public');
       sets.push('privacy = ?'); vals.push(patch.privacy);
     }
     if (patch.noindex !== undefined) { sets.push('noindex = ?'); vals.push(patch.noindex ? 1 : 0); }
     if (!sets.length) return space;
-    sets.push('updated_at = ?'); vals.push(now());
-    this.db.prepare(`UPDATE spaces SET ${sets.join(', ')} WHERE id = ?`).run(...vals, space.id);
+    const t = now();
+    sets.push('updated_at = ?'); vals.push(t);
+    tx(this.db, () => {
+      this.db.prepare(`UPDATE spaces SET ${sets.join(', ')} WHERE id = ?`).run(...vals, space.id);
+      // Leaving 'link' disables its links; coming back restores them, view counts and all.
+      if (patch.privacy !== undefined && patch.privacy !== space.privacy) {
+        this.db.prepare(`UPDATE grants SET disabled_at = ?, updated_at = ? WHERE space_id = ? AND kind IN ${LINK_KINDS}`)
+          .run(patch.privacy === 'link' ? null : t, t, space.id);
+      }
+    });
     this.log(cred, 'space.updated', space.id, patch, { type: 'space', id: space.id });
     return this.spaceById(space.id);
+  }
+
+  // ---- share links (grants; a link with a password is a 'password' grant, section 8 rule 5) ----
+  links(space) {
+    return this.db.prepare(`SELECT * FROM grants WHERE space_id = ? AND kind IN ${LINK_KINDS} ORDER BY created_at DESC`).all(space.id);
+  }
+  link(space, id) {
+    return this.db.prepare(`SELECT * FROM grants WHERE id = ? AND space_id = ? AND kind IN ${LINK_KINDS}`).get(String(id), space.id);
+  }
+  linkByKey(space, key) {
+    return this.db.prepare(`SELECT * FROM grants WHERE raw_token = ? AND space_id = ? AND kind IN ${LINK_KINDS}`).get(String(key), space.id);
+  }
+  /** Can this link open the space right now? Checked on every request, so revoke and expiry are immediate. */
+  linkLive(space, g) {
+    return !!g && space.privacy === 'link' && !g.revoked_at && !g.disabled_at && (!g.expires_at || g.expires_at > now())
+      && (g.max_uses == null || g.uses_count <= g.max_uses);
+  }
+
+  async createLink(cred, space, { label, expires_at, password, max_uses }) {
+    const name = String(label || '').trim().slice(0, 200) || 'Share link';
+    let exp = null;
+    if (expires_at) {
+      const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(expires_at) ? `${expires_at}T23:59:59Z` : expires_at);
+      if (isNaN(d)) throw httpErr(400, 'expires_at must be a date');
+      if (d <= new Date()) throw httpErr(400, 'expires_at must be in the future');
+      exp = d.toISOString();
+    }
+    let max = null;
+    if (max_uses !== undefined && max_uses !== null && max_uses !== '') {
+      max = Number(max_uses);
+      if (!Number.isInteger(max) || max < 1) throw httpErr(400, 'max_uses must be a positive whole number');
+    }
+    if (password && String(password).length > 1024) throw httpErr(400, 'Password too long');
+    const hash = password ? await hashPassword(String(password)) : null;
+    const id = newId('grt'), key = 'sfl_' + randomToken(24), t = now();
+    // ponytail: the raw key is stored (as homefast does) so the dashboard can show the URL again.
+    // No await from here on, so nothing interleaves; re-read the space, since hashing awaited.
+    const cur = this.spaceById(space.id);
+    this.db.prepare(`INSERT INTO grants (id,space_id,kind,name,secret_hash,raw_token,expires_at,max_uses,created_at,updated_at,token_hint)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(id, space.id, hash ? 'password' : 'share_link', name, hash, key, exp, max, t, t, key.slice(-4));
+    // Creating a link switches a team space to 'link' (agents may do this; Public stays a person's call).
+    if (cur.privacy === 'team') this.updateSpace(cred, cur, { privacy: 'link' });
+    else if (cur.privacy !== 'link') this.db.prepare('UPDATE grants SET disabled_at = ? WHERE id = ?').run(t, id);
+    this.log(cred, 'link.created', space.id, { name, expires_at: exp, max_uses: max, password: !!hash }, { type: 'grant', id });
+    return this.link(space, id);
+  }
+
+  revokeLink(cred, space, id) {
+    const g = this.link(space, id);
+    if (!g) throw httpErr(404, 'No such link');
+    if (!g.revoked_at) this.db.prepare('UPDATE grants SET revoked_at = ?, updated_at = ? WHERE id = ?').run(now(), now(), g.id);
+    this.log(cred, 'link.revoked', space.id, { name: g.name }, { type: 'grant', id: g.id });
+    return this.link(space, g.id);
+  }
+
+  /** Spend one use when a cookie is issued. Atomic, so parallel visits can't overspend max_uses. */
+  spendLink(g) {
+    return this.db.prepare('UPDATE grants SET uses_count = uses_count + 1, last_used_at = ? WHERE id = ? AND (max_uses IS NULL OR uses_count < max_uses)')
+      .run(now(), g.id).changes === 1;
+  }
+  recordView(g) {
+    const t = now();
+    this.db.prepare('UPDATE grants SET view_count = view_count + 1, first_viewed_at = COALESCE(first_viewed_at, ?), last_viewed_at = ? WHERE id = ?').run(t, t, g.id);
+  }
+
+  // ---- instance branding (meta table) ----
+  branding() {
+    const rows = this.db.prepare("SELECT key, value FROM meta WHERE key IN ('brand_name','brand_logo','brand_accent')").all();
+    const m = Object.fromEntries(rows.map((r) => [r.key.slice(6), r.value]));
+    return { name: m.name || '', logo: m.logo || '', accent: m.accent || '' };
+  }
+  setBranding(cred, { name = '', logo = '', accent = '' }) {
+    name = String(name).trim().slice(0, 100);
+    logo = String(logo).trim();
+    accent = String(accent).trim();
+    if (logo && (!/^https:\/\/[^\s"'<>]+$/i.test(logo) || logo.length > 2000)) throw httpErr(400, 'Logo must be an https:// URL');
+    if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) throw httpErr(400, 'Accent must be a colour like #1a73e8');
+    const up = this.db.prepare('INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
+    tx(this.db, () => { up.run('brand_name', name); up.run('brand_logo', logo); up.run('brand_accent', accent); });
+    this.log(cred, 'instance.branding', null, { name, logo, accent });
+    return this.branding();
   }
 
   deleteSpace(cred, space) {

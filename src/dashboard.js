@@ -36,7 +36,7 @@ export function spacesPage(cred, spaces) {
 <section class="card"><h2>New space</h2><form method="post" action="/api/spaces">${hidden(cred)}<input type="hidden" name="_next" value="__space__">${field('name', 'Name')}<button>Create</button></form></section>`);
 }
 
-export function spacePage(cred, space, versions, warnings) {
+export function spacePage(cred, space, versions, warnings, links) {
   const live = versions.find((v) => v.id === space.live_version_id);
   const hist = versions.map((v, i) => {
     const prev = versions[i + 1];
@@ -51,8 +51,9 @@ ${warnings.length ? `<section class="card warn"><h2>Warnings on the live version
 <section class="card"><h2>Upload</h2><form data-upload="/api/spaces/${esc(space.slug)}/upload"><input type="file" name="zip" accept=".zip,application/zip" required>
 <input name="message" placeholder="What changed?"><button>Publish zip</button><span class="status"></span></form></section>
 <section class="card"><h2>Who can view</h2><form method="post" action="/api/spaces/${esc(space.slug)}">${hidden(cred)}<input type="hidden" name="_method" value="PATCH"><input type="hidden" name="_next" value="/spaces/${esc(space.slug)}">
-<select name="privacy"><option value="team"${space.privacy === 'team' ? ' selected' : ''}>Team only</option><option value="public"${space.privacy === 'public' ? ' selected' : ''}>Public</option></select>
-<button>Save</button></form><small>“Anyone with the link” arrives with share links.</small></section>
+<select name="privacy">${[['team', 'Team only'], ['link', 'Anyone with the link'], ['public', 'Public']].map(([v, l]) => `<option value="${v}"${space.privacy === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
+<button>Save</button></form><small>Team members can always view. Switching away from “Anyone with the link” pauses its links; switching back restores them.</small></section>
+${links ? sharing(cred, space, links) : ''}
 <section class="card"><h2>History</h2><ol class="history">${hist || '<li>No versions.</li>'}</ol></section>`);
 }
 
@@ -74,13 +75,33 @@ ${created ? `<section class="card ok"><p>Invite link (shown once, valid 7 days):
 <small>${invites} unused invite(s) outstanding.</small></section>`);
 }
 
-export function instancePage(cred, stats, gc, dcr) {
+function sharing(cred, space, links) {
+  const status = (l) => (l.revoked_at ? 'revoked' : l.disabled_at ? 'paused' : l.active ? 'active' : 'expired');
+  const rows = links.map((l) => `<tr><td>${esc(l.label)}${l.password ? ' <span class="badge">password</span>' : ''}<br><input readonly class="wide" value="${esc(l.url)}" aria-label="Link for ${esc(l.label)}"></td>
+<td>${status(l)}<br><small>${l.expires_at ? `until ${fmtTime(l.expires_at)}` : 'no expiry'}</small></td><td>${l.uses}${l.max_uses != null ? ` / ${l.max_uses}` : ''}</td>
+<td>${l.view_count}<br><small>${l.last_viewed_at ? `last ${fmtTime(l.last_viewed_at)}` : 'not opened yet'}</small></td>
+<td>${l.revoked_at ? '' : `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/revoke" class="inline">${hidden(cred)}<button class="link">Revoke</button></form>`}</td></tr>`).join('');
+  return `<section class="card" id="sharing"><h2>Sharing</h2>
+${links.length ? `<table><thead><tr><th>Link</th><th>Status</th><th>Uses</th><th>Views</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<p>No share links yet. Creating one switches a team-only space to “Anyone with the link”.</p>'}
+<form method="post" action="/api/spaces/${esc(space.slug)}/links">${hidden(cred)}<h3>New link</h3>
+<label>Label <input name="label" placeholder="Acme — CFO" maxlength="200"></label>
+<label>Expires <input type="date" name="expires_at"></label>
+<label>Password <input type="password" name="password" autocomplete="new-password"></label>
+<label>Max uses <input type="number" name="max_uses" min="1" step="1"></label>
+<button>Create link</button></form><small>A use is spent each time a new browser opens the link. Views count page loads.</small></section>`;
+}
+
+export function instancePage(cred, stats, gc, dcr, brand) {
   return layout('Instance', cred, `<h1>Instance</h1><ul><li>${stats.spaces} spaces, ${stats.versions} versions, ${stats.users} people</li><li>${fmtBytes(stats.bytesReferenced)} referenced in blob storage</li></ul>
 ${gc ? `<p class="ok">GC removed ${gc.removed} file(s), freed ${fmtBytes(gc.freed)}.</p>` : ''}
 <form method="post" action="/api/admin/gc">${hidden(cred)}<input type="hidden" name="_next" value="/instance?gc=1"><button>Run GC</button></form>
 <p><small>Garbage collection also runs lazily after publishes and deletes (at most every few hours). There are no background timers.</small></p>
 <section class="card"><h2>Dynamic client registration</h2><p>${dcr ? 'On' : 'Off'}. Clients normally identify themselves with a metadata URL; turn this on only for clients that need RFC 7591 registration.</p>
-<form method="post" action="/api/admin/dcr">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${dcr ? '0' : '1'}"><button>${dcr ? 'Turn off' : 'Turn on'}</button></form></section>`);
+<form method="post" action="/api/admin/dcr">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${dcr ? '0' : '1'}"><button>${dcr ? 'Turn off' : 'Turn on'}</button></form></section>
+<section class="card"><h2>Branding</h2><p>Shown to clients on the password, not-found and expired-link pages.</p>
+<form method="post" action="/api/admin/branding">${hidden(cred)}<label>Agency name <input name="name" value="${esc(brand.name)}" maxlength="100"></label>
+<label>Logo URL <input type="url" name="logo" value="${esc(brand.logo)}" placeholder="https://…"></label>
+<label>Accent colour <input type="color" name="accent" value="${esc(brand.accent || '#1a73e8')}"></label><button>Save branding</button></form></section>`);
 }
 
 export const messagePage = (cred, title, msg) => layout(title, cred, `<section class="card narrow"><h1>${esc(title)}</h1><p>${esc(msg)}</p></section>`, { nav: false });
