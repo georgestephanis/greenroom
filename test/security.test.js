@@ -122,7 +122,8 @@ test('rule 7: doc token is space-bound and injected into documents only', () => 
   const tok = signDocToken('s', A);
   assert.ok(verifyDocToken('s', A, tok));
   assert.ok(!verifyDocToken('s', B, tok));
-  assert.ok(!verifyDocToken('s', A, signDocToken('s', A, -1)));
+  assert.ok(!verifyDocToken('s', A, signDocToken('s', A, undefined, -1)));
+  assert.deepEqual(verifyDocToken('s', A, signDocToken('s', A, { kind: 'link', subject: 'grt_x' })), { kind: 'link', subject: 'grt_x' });
   assert.match(injectDocToken('<html><head><title>x</title></head>', tok), /<head><meta name="freespace-doc-token" content="/);
 });
 

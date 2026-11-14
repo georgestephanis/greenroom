@@ -92,6 +92,10 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
     return send(res, 303, '', { 'Set-Cookie': viewerSetCookie(space, signed), Location: clean, 'Cache-Control': 'no-store' });
   }
 
+  // Is this viewer ({ kind, subject }) allowed into the non-public space right now? Reads the session or link row.
+  const liveViewer = (space, v) => (v?.kind === 'team' && !!auth.sessionUser(v.subject))
+    || (v?.kind === 'link' && store.linkLive(space, store.link(space, v.subject)));
+
   // A plugin route under /_fs/. Core has already set the sandbox headers; here it checks the credential
   // (a per-document token, rule 7), runs the handler, and filters what comes back (rules 2 and 5).
   async function pluginRoute(req, res, url, space, route) {
@@ -107,7 +111,15 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
     }
     const m = req.method === 'HEAD' ? 'GET' : req.method;
     if (!route.methods.includes(m)) return send(res, 405, 'Method not allowed', { Allow: route.methods.join(', ') });
-    if (token && !verifyDocToken(config.secret, space, req.headers['x-fs-doc-token'])) return send(res, 401, 'Document token required', { 'Cache-Control': 'no-store' });
+    if (token) {
+      // The token says who the document was served to; that viewer must still be allowed in right now
+      // (a revoked link, a privacy change or a signed-out member ends access before the token expires).
+      const v = verifyDocToken(config.secret, space, req.headers['x-fs-doc-token']);
+      if (!v || !(space.privacy === 'public' || liveViewer(space, v))) return send(res, 401, 'Document token required', { 'Cache-Control': 'no-store' });
+    } else if (space.privacy !== 'public') {
+      const cookies = parseCookies(req.headers.cookie), s = auth.sessionFromCookie(cookies[SESSION_COOKIE]);
+      if (!liveViewer(space, viewerFor(space, cookies)) && !(s && auth.activeUser(s.user_id))) return send(res, 401, 'Sign in required', { 'Cache-Control': 'no-store' });
+    }
     let body;
     if (m !== 'GET') {
       let raw = '';
@@ -154,19 +166,19 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
 
     // ---- who may view? every mode ends at the same space-bound viewer cookie (rule 6) ----
     const cookies = parseCookies(req.headers.cookie);
-    let viewedLink = null, who = { kind: 'public' }; // `who` is what plugins may know about the viewer
+    let viewedLink = null, who = { kind: 'public' }, subject = ''; // `who` is what plugins may know about the viewer; `subject` goes only into the doc token
     if (keyed) return linkEntry(req, res, url, space, cookies, brand);
     if (space.privacy !== 'public') {
       const viewer = viewerFor(space, cookies);
       let ok = false, deadLink = false;
       // Bound to the dashboard session that minted it: logout or a removed member ends access.
-      if (viewer && viewer.kind === 'team') ok = !!auth.sessionUser(viewer.subject) && !!(who = { kind: 'team' });
+      if (viewer && viewer.kind === 'team') ok = !!auth.sessionUser(viewer.subject) && !!(who = { kind: 'team' }) && !!(subject = viewer.subject);
       // Bound to the link: the row is read on every request, so revoke, expiry and privacy changes are immediate.
       if (viewer && viewer.kind === 'link') {
         const g = store.link(space, viewer.subject);
         ok = store.linkLive(space, g);
         deadLink = !ok;
-        if (ok) { viewedLink = g; who = { kind: 'link', label: g.name }; }
+        if (ok) { viewedLink = g; who = { kind: 'link', label: g.name }; subject = g.id; }
       }
       if (!ok) {
         // The Strict dashboard cookie only arrives on same-site navigations; use it to mint a viewer cookie.
@@ -177,6 +189,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
           res.setHeader('Set-Cookie', viewerSetCookie(space, signed));
           ok = true;
           who = { kind: 'team' };
+          subject = s.id;
         }
       }
       if (!ok) {
@@ -260,7 +273,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
     // Plugins may rewrite HTML documents at serve time (the sqlite doc token, the watermark banner).
     // Stored files are never touched, and the response is never cached.
     if (status === 200 && file.content_type.startsWith('text/html') && isDocumentRequest(req) && file.size <= 8 * 1024 * 1024 && plugins.hasTransforms(space)) {
-      const html = await plugins.transform(space, { html: (await store.cas.read(file.sha256)).toString('utf8'), viewer: who });
+      const html = await plugins.transform(space, { html: (await store.cas.read(file.sha256)).toString('utf8'), viewer: who, subject });
       res.setHeader('Cache-Control', 'no-store');
       return send(res, status, method === 'HEAD' ? '' : html, { 'Content-Length': Buffer.byteLength(html) });
     }

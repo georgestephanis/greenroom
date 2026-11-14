@@ -152,6 +152,43 @@ test('sqlite: MCP creates the database; the browser API obeys the per-table poli
   assert.equal((await api(t, dt, { sql: 'select 1' })).status >= 400, true, 'no raw SQL from the browser');
 });
 
+test('sqlite: the doc token is bound to the viewer, re-checked on every call', async (x) => {
+  const { t, admin } = await world(x);
+  const tok = await token(admin, ['publish', 'db', 'read']);
+  await mcp(t, tok, 'db_exec', { slug: 'demo', sql: 'CREATE TABLE notes (id INTEGER PRIMARY KEY, body TEXT)' });
+  await admin.post('/api/spaces/demo/plugins/sqlite', { settings: { tables: { notes: 'read+write' } } }, 'PUT');
+  const tables = (dt) => api(t, dt, { op: 'tables' }).then((r) => r.status);
+
+  // a share-link viewer loses access the moment the link is revoked
+  const l = await link(admin, 'Acme');
+  const c = client(t.base);
+  const u = new URL(l.url);
+  await c.fetch(u.pathname + u.search, { headers: DOC });
+  const lt = await docToken(c);
+  assert.equal(await tables(lt), 200);
+  await admin.post(`/api/spaces/demo/links/${l.id}/revoke`, {});
+  assert.equal(await tables(lt), 401, 'revoked link');
+
+  // ...and when the space goes team-only
+  const l2 = await link(admin, 'Beta');
+  const c2 = client(t.base);
+  await c2.fetch(new URL(l2.url).pathname + new URL(l2.url).search, { headers: DOC });
+  const lt2 = await docToken(c2);
+  assert.equal(await tables(lt2), 200);
+  await admin.post('/api/spaces/demo', { privacy: 'team' }, 'PATCH');
+  assert.equal(await tables(lt2), 401, 'team-only now');
+
+  // `none` routes answer only viewers of a non-public space
+  assert.equal((await fetch(t.base + '/s/demo/_fs/db.js')).status, 401, 'anonymous on a team-only space');
+  assert.equal((await admin.fetch('/s/demo/_fs/db.js')).status, 200, 'team member');
+
+  // a team member's token dies with their session
+  const tt = await docToken(admin);
+  assert.equal(await tables(tt), 200);
+  await admin.post('/api/logout', {});
+  assert.equal(await tables(tt), 401, 'signed out');
+});
+
 test('sqlite: raw SQL over MCP needs the db scope, stays in this space file, and is guarded', async (x) => {
   const { t, admin } = await world(x);
   const rw = await token(admin, ['publish', 'db', 'read']);

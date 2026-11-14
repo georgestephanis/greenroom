@@ -79,19 +79,21 @@ export function viewerSetCookie(space, signed) {
   return `${viewerCookieName(space)}=${signed.value}; Path=/s/${space.slug}/; HttpOnly; Secure; SameSite=None; Max-Age=${maxAge}`;
 }
 
-// Rule 7: per-document token for data-API writes. Short-lived, bound to one space, only readable by
-// the document it was injected into (a <meta> tag). Used by the sqlite plugin (M5).
-export function signDocToken(secret, space, ttlMs = 10 * 60e3) {
-  const body = `${space.id}.${Date.now() + ttlMs}`;
+// Rule 7: per-document token for data-API writes. Short-lived, bound to one space and to the viewer the
+// document was served to (kind + link id or session id), so core can re-check that viewer on every call.
+// Only readable by the document it was injected into (a <meta> tag). Used by the sqlite plugin (M5).
+export function signDocToken(secret, space, viewer = { kind: 'public' }, ttlMs = 10 * 60e3) {
+  const body = `${space.id}.${viewer.kind}.${viewer.subject || '-'}.${Date.now() + ttlMs}`;
   return `${body}.${hmac(secret, `doc:${body}`)}`;
 }
+/** Returns { kind, subject } for a valid token, else null. Callers still check the viewer is live. */
 export function verifyDocToken(secret, space, token) {
   const i = (token || '').lastIndexOf('.');
-  if (i < 1) return false;
+  if (i < 1) return null;
   const body = token.slice(0, i);
-  if (!safeEqual(token.slice(i + 1), hmac(secret, `doc:${body}`))) return false;
-  const [spaceId, exp] = body.split('.');
-  return spaceId === space.id && Number(exp) >= Date.now();
+  if (!safeEqual(token.slice(i + 1), hmac(secret, `doc:${body}`))) return null;
+  const [spaceId, kind, subject, exp] = body.split('.');
+  return spaceId === space.id && Number(exp) >= Date.now() ? { kind, subject } : null;
 }
 export function injectDocToken(html, token) {
   const tag = `<meta name="freespace-doc-token" content="${token}">`;

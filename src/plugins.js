@@ -140,10 +140,10 @@ export function createPlugins({ store, config, installed = [] }) {
     },
     callRoute: (space, r, input) => r.handler({ ...input, space: { id: space.id, slug: space.slug }, settings: settingsOf(space, r.plugin), dir: dirOf(space, r.plugin) }),
     hasTransforms: (space) => active(space).some((n) => get(n).transforms.length),
-    async transform(space, { html, viewer }) {
+    async transform(space, { html, viewer, subject }) {
       for (const n of active(space)) {
         for (const fn of get(n).transforms) {
-          const out = await fn({ space: { id: space.id, slug: space.slug, name: space.name }, html, viewer, settings: settingsOf(space, n), docToken: () => signDocToken(config.secret, space) });
+          const out = await fn({ space: { id: space.id, slug: space.slug, name: space.name }, html, viewer, settings: settingsOf(space, n), docToken: () => signDocToken(config.secret, space, { kind: viewer.kind, subject }) });
           if (typeof out === 'string') html = out;
         }
       }
