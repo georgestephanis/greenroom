@@ -8,6 +8,7 @@ import path from 'node:path';
 import { boot, client, setupAdmin } from './helpers.js';
 import { definePlugin } from '../src/plugins.js';
 import { withZip, ZipWriter } from '../src/zip.js';
+import { DatabaseSync } from 'node:sqlite';
 
 const DOC = { 'sec-fetch-dest': 'document' };
 const files = (o) => Object.entries(o).map(([p, content]) => ({ path: p, content }));
@@ -307,6 +308,27 @@ test('import: plugin files count against the space size limit, installed or not'
   const r2 = await importAs(admin, many, 'many');
   assert.equal(r2.status, 201, await r2.clone().text());
   assert.ok((await r2.json()).warnings.some((w) => /More than 100 snapshots/.test(w)));
+});
+
+test('sqlite: an imported database is checked, and its size cap follows its page size', async (x) => {
+  const { t, admin } = await world(x);
+  const base = await exportTo(admin, 'demo', false);
+  const withDb = (buf) => rezip(base, (m) => { m.set('plugins/sqlite/app.sqlite', buf); });
+  for (const [name, buf] of [['garbage', Buffer.from('not a database at all')], ['damaged', Buffer.concat([Buffer.from('SQLite format 3\0'), Buffer.alloc(4096, 7)])]]) {
+    const r = await importAs(admin, await withDb(buf), name);
+    assert.equal(r.status, 201, await r.clone().text());
+    assert.ok((await r.json()).warnings.some((w) => /sqlite database was not imported/.test(w)), name);
+  }
+  // A 64 KiB-page database still stops at ~100 MB.
+  const f = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fsq-')), 'big.sqlite');
+  const d = new DatabaseSync(f);
+  d.exec('PRAGMA page_size = 65536; VACUUM; CREATE TABLE b (v BLOB)');
+  d.close();
+  assert.equal((await importAs(admin, await withDb(fs.readFileSync(f)), 'wide')).status, 201);
+  const tok = (await (await admin.post('/api/tokens', { name: 'w', spaces: ['wide'], perms: ['db', 'read'] })).json()).token;
+  const fill = await fetch(t.base + '/mcp', { method: 'POST', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'db_exec', arguments: { slug: 'wide', sql: Array(14).fill('INSERT INTO b VALUES (zeroblob(8000000))') } } }) });
+  const body = await fill.json();
+  assert.match(JSON.stringify(body), /full/, 'full at 100 MB, not 1.6 GB');
 });
 
 test('sqlite: snapshots follow versions, and a database round-trips through both export zips', async (x) => {

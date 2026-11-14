@@ -14,8 +14,7 @@ import { httpErr } from '../auth.js';
 import { injectDocToken } from '../security.js';
 import { sha256hex, now } from '../util.js';
 
-const MAX_PAGES = 25600; // ~100 MB at 4 KiB pages: a runaway insert can't fill a small box
-const MAX_BYTES = 100 * 1024 * 1024; // database size cap; max_page_count is derived from the file's page size
+const MAX_BYTES = 100 * 1024 * 1024; // database size cap, so a runaway insert can't fill a small box
 const MAX_SNAPSHOTS = 100; // the most `keep` allows
 const MAX_ROWS = 1000;
 const POLICY = ['off', 'read', 'read+insert', 'read+write'];
@@ -47,7 +46,8 @@ function collect(stmt, args, max = MAX_ROWS) {
 function open(dir, { readOnly = false, create = false } = {}) {
   if (!create && !fs.existsSync(dbFile(dir))) return null;
   const db = new DatabaseSync(dbFile(dir), { readOnly, limits: { length: MAX_VALUE } }); // `limits` needs Node 24.x; collect() still caps the response without it
-  if (!readOnly) db.exec(`PRAGMA max_page_count = ${MAX_PAGES}; PRAGMA foreign_keys = ON`);
+  // max_page_count is in pages, and an imported file may use any page size (512 B to 64 KiB).
+  if (!readOnly) db.exec(`PRAGMA max_page_count = ${Math.floor(MAX_BYTES / db.prepare('PRAGMA page_size').get().page_size)}; PRAGMA foreign_keys = ON`);
   return db;
 }
 function withDb(dir, opts, fn) {
@@ -204,7 +204,7 @@ export default definePlugin({
           try {
             for (const s of list) changes += Number(db.prepare(s).run(...(list.length === 1 ? params(args.params) : [])).changes);
             db.exec('COMMIT');
-          } catch (e) { db.exec('ROLLBACK'); throw e; }
+          } catch (e) { try { db.exec('ROLLBACK'); } catch {} throw e; } // SQLITE_FULL has already rolled back; keep its error
           return { changes };
         }));
       });
@@ -281,6 +281,11 @@ async function restore(ctx, dir, stream) {
     fs.readSync(fd, head, 0, 16, 0);
     fs.closeSync(fd);
     if (head.toString('latin1') !== MAGIC) throw new Error('not a SQLite database');
+    // An imported file is untrusted: it must open and pass SQLite's own structural check.
+    let check;
+    try { const db = new DatabaseSync(tmp); try { db.exec('PRAGMA journal_mode = DELETE'); check = db.prepare('PRAGMA quick_check').get().quick_check; } finally { db.close(); } }
+    catch (e) { check = e.message; }
+    if (check !== 'ok') throw new Error(`the database is damaged (${String(check).slice(0, 80)})`);
     fs.renameSync(tmp, dbFile(dir));
   } finally { fs.rmSync(tmp, { force: true }); }
 }
