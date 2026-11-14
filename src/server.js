@@ -7,6 +7,7 @@ import { loadConfig } from './config.js';
 import { openDb } from './db.js';
 import { CAS } from './cas.js';
 import { Store } from './store.js';
+import { People } from './people.js';
 import { Auth, httpErr, can, requireSession, requireAdmin, SESSION_COOKIE, normaliseScope, scopeString } from './auth.js';
 import { OAuth } from './oauth.js';
 import { createMcp } from './mcp.js';
@@ -59,8 +60,10 @@ export function createApp(overrides = {}) {
     return false;
   };
   const clientIp = (req) => (config.trustProxy && String(req.headers['x-forwarded-for'] || '').split(',').pop().trim()) || req.socket.remoteAddress;
+  const people = new People({ db, auth, store, config, throttle: attempt });
   const handleSpace = createSpaceHandler({ store, auth, config, clientIp, plugins, throttle: { hit: attempt, clear: (k) => attempts.delete(k) } });
   const origin = (req) => oauth.issuer(req);
+  const teamUsers = () => db.prepare('SELECT * FROM users ORDER BY created_at').all().map((u) => ({ ...u, lapsed: !u.disabled_at && auth.lapsed(u) }));
   const pubLink = (req, space, g) => ({
     id: g.id, label: g.name, url: g.key ? `${origin(req)}/s/${space.slug}/?key=${g.key}` : null, hint: g.token_hint, password: !!g.secret_hash,
     expires_at: g.expires_at, max_uses: g.max_uses, uses: g.uses_count, revoked_at: g.revoked_at, disabled_at: g.disabled_at,
@@ -117,7 +120,9 @@ export function createApp(overrides = {}) {
     if (a === 'login' && m === 'POST') {
       const key = `${String(body.email || '').toLowerCase()}|${ip}`;
       if (attempt(key)) throw httpErr(429, 'Too many attempts, try again later');
-      const s = await auth.login(body.email, body.password, { userAgent: req.headers['user-agent'], ip });
+      let s;
+      try { s = await auth.login(body.email, body.password, { userAgent: req.headers['user-agent'], ip }); }
+      catch (e) { if (e.lapsedUser) people.sendReconfirm(e.lapsedUser); throw e; }
       attempts.delete(key);
       res.setHeader('Set-Cookie', sessionCookie(s));
       return { status: 200, body: { ok: true }, next: safeNext(body._next) };
@@ -131,6 +136,22 @@ export function createApp(overrides = {}) {
       catch (e) { db.prepare('UPDATE invites SET used_at = NULL WHERE id = ?').run(inv.id); throw e; }
       res.setHeader('Set-Cookie', sessionCookie(auth.createSession(u.id, { userAgent: req.headers['user-agent'], ip })));
       return { status: 201, body: { ok: true }, next: '/' };
+    }
+
+    // Self-signup and re-confirmation (M6). Same answer for every well-formed address; mail is sent off the request path.
+    if (a === 'signup' && !b && m === 'POST') {
+      if (attempt(`signup-ip|${ip}`, 10, 60 * 60e3)) throw httpErr(429, 'Too many attempts, try again later');
+      people.requestSignup(body.email);
+      return { status: 202, body: { ok: true, message: 'Check your inbox' }, next: '/signup?sent=1' };
+    }
+    if (a === 'signup' && b === 'complete' && m === 'POST') {
+      const u = await people.completeSignup({ token: body.token, name: body.name, password: body.password });
+      res.setHeader('Set-Cookie', sessionCookie(auth.createSession(u.id, { userAgent: req.headers['user-agent'], ip })));
+      return { status: 201, body: { ok: true }, next: '/' };
+    }
+    if (a === 'confirm' && m === 'POST') {
+      people.confirm(body.token);
+      return { status: 200, body: { ok: true }, next: '/login?confirmed=1' };
     }
 
     if (!cred) throw httpErr(401, 'Sign in required');
@@ -151,13 +172,19 @@ export function createApp(overrides = {}) {
         newId('inv'), sha256hex(token), body.role === 'admin' ? 'admin' : 'member', cred.userId, now(), new Date(Date.now() + 7 * 864e5).toISOString());
       return { status: 201, body: { invite: `${config.publicUrl || `https://${req.headers.host}`}/invite/${token}` }, invite: true };
     }
-    if (a === 'users' && c === 'disable' && m === 'POST') {
+    // Offboarding: Auth.activeUser is the live granter check behind every credential (session, pasted key,
+    // OAuth access and refresh), so setting disabled_at stops them all at once. Nothing they made is deleted.
+    if (a === 'users' && (c === 'deactivate' || c === 'reactivate') && m === 'POST') {
       requireAdmin(cred);
-      if (b === cred.userId) throw httpErr(400, 'You cannot disable yourself');
-      db.prepare('UPDATE users SET disabled_at = ? WHERE id = ?').run(now(), b);
-      db.prepare('UPDATE sessions SET revoked_at = ? WHERE user_id = ?').run(now(), b);
-      store.log(cred, 'user.disabled', null, { user: b });
-      return { status: 200, body: { ok: true }, next: '/team' };
+      const u = db.prepare('SELECT * FROM users WHERE id = ?').get(b);
+      if (!u) throw httpErr(404, 'No such user');
+      if (c === 'deactivate') {
+        if (u.role === 'admin' && !u.disabled_at && !db.prepare("SELECT 1 FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id != ?").get(b)) throw httpErr(400, 'The last active admin cannot be deactivated');
+        db.prepare('UPDATE users SET disabled_at = COALESCE(disabled_at, ?) WHERE id = ?').run(now(), b);
+        db.prepare('UPDATE sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ?').run(now(), b); // reactivation won't revive them
+      } else db.prepare('UPDATE users SET disabled_at = NULL WHERE id = ?').run(b);
+      store.log(cred, `user.${c}d`, null, { user: b });
+      return { status: 200, body: { ok: true }, next: b === cred.userId ? '/login' : '/team' };
     }
     // Pasted agent tokens: minted and revoked only by a person (escalation set), same rows as OAuth grants.
     if (a === 'tokens' && !b && m === 'POST') {
@@ -193,6 +220,10 @@ export function createApp(overrides = {}) {
       store.log(cred, flag(body.enabled) === false ? 'plugin.disabled' : 'plugin.enabled', null, { plugin: c });
       return { status: 200, body: { ok: true }, next: '/instance' };
     }
+    if (a === 'admin' && b === 'smtp' && !c && m === 'POST') { requireAdmin(cred); people.setSmtp(cred, body, origin(req)); return { status: 200, body: people.view(), next: '/instance#people' }; }
+    if (a === 'admin' && b === 'smtp' && c === 'test' && m === 'POST') { requireAdmin(cred); await people.test(cred); return { status: 200, body: { ok: true }, next: '/instance?mailed=1#people' }; }
+    if (a === 'admin' && b === 'signup' && m === 'POST') { requireAdmin(cred); people.setSignup(cred, body); return { status: 200, body: people.view(), next: '/instance#people' }; }
+    if (a === 'admin' && b === 'reconfirm' && m === 'POST') { requireAdmin(cred); people.setReconfirm(cred, body); return { status: 200, body: people.view(), next: '/instance#people' }; }
     if (a === 'admin' && b === 'gc' && m === 'POST') {
       requireAdmin(cred);
       const r = await store.maybeGc(true);
@@ -331,10 +362,15 @@ export function createApp(overrides = {}) {
     const p = url.pathname;
     if (p === '/assets/app.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(ui.APP_JS); }
     if (p === '/assets/app.css') { res.setHeader('Content-Type', 'text/css'); return res.end(ui.APP_CSS); }
-    if (p === '/login') return cred ? redirect(res, '/', 302) : html(res, 200, ui.authPage('Sign in', null, url.searchParams.get('error'), ui.loginFields, '/api/login', 'Sign in', `<input type="hidden" name="_next" value="${esc2(safeNext(url.searchParams.get('next')))}">`));
+    if (p === '/login') return cred ? redirect(res, '/', 302) : html(res, 200, ui.authPage('Sign in', null, url.searchParams.get('error'), ui.loginFields + (people.signupOpen() ? '<p><small>New here? <a href="/signup">Sign up with your work email</a></small></p>' : ''), '/api/login', 'Sign in', `${url.searchParams.get('confirmed') ? '<p class="ok">Email confirmed. Sign in to continue.</p>' : ''}<input type="hidden" name="_next" value="${esc2(safeNext(url.searchParams.get('next')))}">`));
     if (p === '/setup') return auth.userCount() ? redirect(res, '/login', 302) : html(res, 200, ui.authPage('Set up freespace', null, url.searchParams.get('error'), ui.setupFields, '/api/setup', 'Create admin account'));
     let m = /^\/invite\/([\w-]+)$/.exec(p);
     if (m) return html(res, 200, ui.authPage('Join the team', null, url.searchParams.get('error'), ui.setupFields, '/api/invites/accept', 'Join', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
+    if (p === '/signup') return people.signupOpen() ? html(res, 200, ui.signupPage(url.searchParams.get('sent'), url.searchParams.get('error'))) : html(res, 404, ui.messagePage(null, 'Not available', 'Self-signup is not turned on here. Ask an admin for an invite.'));
+    m = /^\/signup\/([\w-]+)$/.exec(p);
+    if (m) return html(res, 200, ui.authPage('Create your account', null, url.searchParams.get('error') || (people.peek('signup', m[1]) ? null : 'This link is invalid or has expired'), ui.signupFields, '/api/signup/complete', 'Create account', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
+    m = /^\/confirm\/([\w-]+)$/.exec(p); // a button, not a GET side effect, so mail scanners can't spend the link
+    if (m) return html(res, 200, ui.authPage('Confirm your email', null, url.searchParams.get('error') || (people.peek('reconfirm', m[1]) ? null : 'This link is invalid or has expired'), '', '/api/confirm', 'Confirm', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     if (!cred || cred.type !== 'session') {
       if (!auth.userCount()) return redirect(res, '/setup', 302);
       return redirect(res, `/login?next=${encodeURIComponent(p + url.search)}`, 302);
@@ -368,8 +404,8 @@ export function createApp(overrides = {}) {
       return html(res, 200, ui.accessPage(cred, rows.map((r) => ({ ...r, scope: scopeString(JSON.parse(r.scope_json)) })), store.listSpaces()));
     }
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
-    if (p === '/team') return html(res, 200, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
-    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n) })))); }
+    if (p === '/team') return html(res, 200, ui.teamPage(cred, teamUsers(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
+    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n) })), { ...people.view(), mailed: url.searchParams.get('mailed') })); }
     m = /^\/spaces\/([^/]+)\/export$/.exec(p);
     if (m) {
       const space = store.space(m[1]);
@@ -490,7 +526,7 @@ export function createApp(overrides = {}) {
       if (isForm) {
         if (r.shownOnce) return html(res, 201, ui.shownOnce(cred, r.shownOnce));
         if (r.minted) return html(res, 201, ui.accessPage(cred, [], store.listSpaces(), r.minted));
-        if (r.invite) return html(res, 201, ui.teamPage(cred, db.prepare('SELECT * FROM users ORDER BY created_at').all(), 1, r.body.invite));
+        if (r.invite) return html(res, 201, ui.teamPage(cred, teamUsers(), 1, r.body.invite));
         return redirect(res, safeNext(r.next));
       }
       return json(res, r.status, r.body);
@@ -508,5 +544,5 @@ export function createApp(overrides = {}) {
     }
   });
   server.keepAliveTimeout = 5000;
-  return { server, store, auth, config, db, plugins };
+  return { server, store, auth, config, db, plugins, people };
 }

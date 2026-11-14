@@ -206,6 +206,20 @@ export const MIGRATIONS = [
     settings_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (space_id, plugin)
   );`,
+  // M6 (freespace-only): people. Single-use emailed links (signup, re-confirmation), stored as sha256.
+  `
+  ALTER TABLE users ADD COLUMN email_confirmed_at TEXT;
+  CREATE TABLE email_tokens (
+    token_hash TEXT PRIMARY KEY,
+    kind TEXT NOT NULL,                             -- signup | reconfirm
+    email TEXT NOT NULL,
+    user_id TEXT,                                   -- reconfirm only
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    used_at TEXT
+  );
+  CREATE INDEX idx_email_tokens_user ON email_tokens(user_id);
+  `,
 ];
 
 export function openDb(file) {

@@ -2,7 +2,7 @@
 // before any route runs; enforcement reads only that object (issue #214 section 6).
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
-import { newId, now, randomToken, sha256hex, hmac, safeEqual } from './util.js';
+import { newId, now, randomToken, sha256hex, hmac, safeEqual, normEmail } from './util.js';
 
 const scrypt = promisify(crypto.scrypt);
 const N = 2 ** 15, R = 8, P = 1;
@@ -103,18 +103,27 @@ export class Auth {
   constructor(db, config) {
     this.db = db;
     this.config = config;
+    this.reconfirm = null; // { days, since } while email re-confirmation is on (set by People)
   }
 
   userCount() { return this.db.prepare('SELECT COUNT(*) c FROM users').get().c; }
   getUser(id) { return this.db.prepare('SELECT * FROM users WHERE id = ?').get(id); }
+  /** The live-constraint check every credential goes through: deactivated or lapsed => null. */
   activeUser(id) {
     const u = this.getUser(id);
-    return u && !u.disabled_at ? u : null;
+    return u && !u.disabled_at && !this.lapsed(u) ? u : null;
+  }
+  /** Re-confirmation is checked lazily, here, never by a timer. The clock starts when the setting is turned on. */
+  lapsed(u) {
+    const r = this.reconfirm;
+    if (!r) return false;
+    const last = [u.email_confirmed_at, u.created_at, r.since].filter(Boolean).sort().at(-1);
+    return Date.parse(last) + r.days * 864e5 < Date.now();
   }
 
   async createUser({ email, password, role = 'member', name }) {
-    email = String(email || '').trim().toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw httpErr(400, 'A valid email is required');
+    email = normEmail(email);
+    if (!email) throw httpErr(400, 'A valid email is required');
     if (String(password || '').length < 10) throw httpErr(400, 'Password must be at least 10 characters');
     if (this.db.prepare('SELECT 1 FROM users WHERE username = ?').get(email)) throw httpErr(409, 'Email already registered');
     const id = newId('usr'), t = now();
@@ -125,9 +134,11 @@ export class Auth {
   }
 
   async login(email, password, meta = {}) {
-    const u = this.db.prepare('SELECT * FROM users WHERE username = ?').get(String(email || '').trim());
+    const u = this.db.prepare('SELECT * FROM users WHERE username = ?').get(normEmail(email) ?? '');
     const ok = await verifyPassword(String(password || ''), u ? u.password_hash : DUMMY);
     if (!u || !ok || u.disabled_at) throw httpErr(401, 'Invalid email or password');
+    // Only after the password: the caller emails a confirmation link to the address on file.
+    if (this.lapsed(u)) throw Object.assign(httpErr(401, 'Your email address needs re-confirming. We have sent a link to it; follow it, then sign in.'), { lapsedUser: u });
     return this.createSession(u.id, meta);
   }
 

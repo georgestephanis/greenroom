@@ -116,7 +116,7 @@ test('auth: scrypt PHC hashes, invites, login throttle, disabled users', async (
   const bobPost = (p, b) => bob.json(p, b, 'POST', { 'x-csrf-token': bob.csrf });
   assert.equal((await bobPost('/api/invites', {})).status, 403); // members cannot invite
   const bobUser = t.db.prepare("SELECT id FROM users WHERE username = 'bob@example.com'").get().id;
-  assert.equal((await admin.post(`/api/users/${bobUser}/disable`, {})).status, 200);
+  assert.equal((await admin.post(`/api/users/${bobUser}/deactivate`, {})).status, 200);
   assert.equal((await bob.fetch('/api/me')).status, 401); // disabled => session dead
   assert.equal((await client(t.base).json('/api/login', { email: 'bob@example.com', password: 'bobs-long-password' })).status, 401);
   const attacker = client(t.base);

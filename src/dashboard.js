@@ -72,11 +72,17 @@ ${list('Added', d.added, (f) => `<li>${esc(f.path)} <small>${fmtBytes(f.size)}</
 ${!d.added.length && !d.removed.length && !d.changed.length ? '<p>No differences.</p>' : ''}${td}`);
 }
 
+export const signupFields = field('name', 'Your name') + field('password', 'Password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
+// One page for every outcome: allowed, not allowed and already registered all read "check your inbox".
+export const signupPage = (sent, error) => (sent
+  ? messagePage(null, 'Check your inbox', 'If that address can sign up here, we have sent it a link. It is valid for 30 minutes.')
+  : authPage('Sign up', null, error, field('email', 'Work email', 'email', 'autocomplete="email"'), '/api/signup', 'Send me a link'));
+
 export function teamPage(cred, users, invites, created) {
   return layout('Team', cred, `<h1>Team</h1>
 ${created ? `<section class="card ok"><p>Invite link (shown once, valid 7 days):</p><input readonly class="wide" value="${esc(created)}"></section>` : ''}
-<table><thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.display_name)}<br><small>${esc(u.username)}</small></td><td>${esc(u.role)}${u.disabled_at ? ' (disabled)' : ''}</td><td>${fmtTime(u.last_login_at)}</td>
-<td>${!u.disabled_at && u.id !== cred.userId ? `<form method="post" action="/api/users/${esc(u.id)}/disable" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/team"><button class="link">Disable</button></form>` : ''}</td></tr>`).join('')}</tbody></table>
+<table><thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.display_name)}<br><small>${esc(u.username)}</small></td><td>${esc(u.role)}${u.disabled_at ? ' <strong>(deactivated)</strong>' : u.lapsed ? ' <strong>(lapsed)</strong>' : ''}</td><td>${fmtTime(u.last_login_at)}</td>
+<td><form method="post" action="/api/users/${esc(u.id)}/${u.disabled_at ? 'reactivate' : 'deactivate'}" class="inline">${hidden(cred)}<button class="link">${u.disabled_at ? 'Reactivate' : 'Deactivate'}</button></form></td></tr>`).join('')}</tbody></table>
 <section class="card"><h2>Invite someone</h2><form method="post" action="/api/invites">${hidden(cred)}<input type="hidden" name="_next" value="__invite__">
 <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label><button>Create invite link</button></form>
 <small>${invites} unused invite(s) outstanding.</small></section>`);
@@ -99,13 +105,25 @@ ${links.length ? `<table><thead><tr><th>Link</th><th>Status</th><th>Uses</th><th
 <button>Create link</button></form><small>A use is spent each time a new browser opens the link. Views count page loads.</small></section>`;
 }
 
-export function instancePage(cred, stats, gc, dcr, brand, plugins = []) {
+export function instancePage(cred, stats, gc, dcr, brand, plugins = [], ppl = {}) {
+  const m = ppl.smtp || {}, sel = (v) => (m.security === v ? ' selected' : '');
   return layout('Instance', cred, `<h1>Instance</h1><ul><li>${stats.spaces} spaces, ${stats.versions} versions, ${stats.users} people</li><li>${fmtBytes(stats.bytesReferenced)} referenced in blob storage</li></ul>
 ${gc ? `<p class="ok">GC removed ${gc.removed} file(s), freed ${fmtBytes(gc.freed)}.</p>` : ''}
 <form method="post" action="/api/admin/gc">${hidden(cred)}<input type="hidden" name="_next" value="/instance?gc=1"><button>Run GC</button></form>
 <p><small>Garbage collection also runs lazily after publishes and deletes (at most every few hours). There are no background timers.</small></p>
 <section class="card"><h2>Dynamic client registration</h2><p>${dcr ? 'On' : 'Off'}. Clients normally identify themselves with a metadata URL; turn this on only for clients that need RFC 7591 registration.</p>
 <form method="post" action="/api/admin/dcr">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${dcr ? '0' : '1'}"><button>${dcr ? 'Turn off' : 'Turn on'}</button></form></section>
+<section class="card" id="people"><h2>Email (SMTP)</h2>${ppl.mailed ? '<p class="ok">Test email sent.</p>' : ''}<p>Needed for self-signup and re-confirmation. ${ppl.smtp ? 'Configured.' : 'Not configured.'}</p>
+<form method="post" action="/api/admin/smtp">${hidden(cred)}<label>Host <input name="host" value="${esc(m.host)}" required></label><label>Port <input type="number" name="port" value="${esc(m.port || 465)}" min="1" max="65535" required></label>
+<label>Security <select name="security"><option value="tls"${sel('tls')}>Implicit TLS (465)</option><option value="starttls"${sel('starttls')}>STARTTLS (587)</option><option value="none"${sel('none')}>None (relay on this machine only)</option></select></label>
+<label>Username <input name="user" value="${esc(m.user)}" autocomplete="off"></label><label>Password <input type="password" name="pass" autocomplete="new-password" placeholder="${m.hasPass ? 'Saved; leave blank to keep' : ''}"></label>
+<label>From address <input type="email" name="from" value="${esc(m.from)}" required></label><button>Save SMTP</button></form>
+${ppl.smtp ? `<form method="post" action="/api/admin/smtp/test" class="inline">${hidden(cred)}<button>Send test email to me</button></form> <form method="post" action="/api/admin/smtp" class="inline">${hidden(cred)}<input type="hidden" name="clear" value="1"><button class="link">Remove SMTP settings</button></form>` : ''}</section>
+<section class="card"><h2>Self-signup</h2><p>${ppl.signupOpen ? 'On: <a href="/signup">/signup</a>' : 'Off'}. People with an address at a listed domain can create a <em>member</em> account. Subdomains must be listed separately. Removing a domain does not deactivate anyone.</p>
+<form method="post" action="/api/admin/signup">${hidden(cred)}<label>Domains (one per line) <textarea name="domains" rows="3">${esc((ppl.domains || []).join('\n'))}</textarea></label>
+<label>Enabled <select name="enabled"><option value="1"${ppl.signup ? ' selected' : ''}>On</option><option value="0"${ppl.signup ? '' : ' selected'}>Off</option></select></label><button>Save</button></form></section>
+<section class="card"><h2>Email re-confirmation</h2><p>Every N days each person must confirm their address by email; until they do, their sessions, tokens and app connections stop working. 0 turns it off.</p>
+<form method="post" action="/api/admin/reconfirm">${hidden(cred)}<label>Days <input type="number" name="days" min="0" max="3650" value="${esc(ppl.reconfirmDays || 0)}"></label><button>Save</button></form></section>
 <section class="card"><h2>Branding</h2><p>Shown to clients on the password, not-found and expired-link pages.</p>
 <form method="post" action="/api/admin/branding">${hidden(cred)}<label>Agency name <input name="name" value="${esc(brand.name)}" maxlength="100"></label>
 <label>Logo URL <input type="url" name="logo" value="${esc(brand.logo)}" placeholder="https://…"></label>

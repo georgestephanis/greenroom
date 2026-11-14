@@ -211,7 +211,7 @@ test('the granter is a live constraint: disabling them kills their grants and to
     const a = await connect(t, bob);
     assert.equal((await mcp(t, a.access_token, 'ping')).status, 200);
     const bobId = t.db.prepare("SELECT id FROM users WHERE username = 'bob@example.com'").get().id;
-    assert.equal((await ada.post(`/api/users/${bobId}/disable`, {})).status, 200);
+    assert.equal((await ada.post(`/api/users/${bobId}/deactivate`, {})).status, 200);
     assert.equal((await mcp(t, a.access_token, 'ping')).status, 401);
     assert.equal((await (await refresh(t, a.refresh_token)).json()).error, 'invalid_grant');
   } finally { t.close(); }

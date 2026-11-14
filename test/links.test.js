@@ -365,6 +365,6 @@ test('a team viewer cookie stops working after logout or when the member is disa
   const bobView = await viewerOf(bob);
   assert.equal(await bobView(), 200);
   const bobId = t.db.prepare("SELECT id FROM users WHERE username = 'bob@example.com'").get().id;
-  assert.equal((await ada.json(`/api/users/${bobId}/disable`, {}, 'POST', { 'x-csrf-token': ada.csrf })).status, 200);
+  assert.equal((await ada.json(`/api/users/${bobId}/deactivate`, {}, 'POST', { 'x-csrf-token': ada.csrf })).status, 200);
   assert.equal(await bobView(), 401, 'disabling the member ends it');
 });
