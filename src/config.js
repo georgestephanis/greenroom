@@ -5,7 +5,7 @@ import crypto from 'node:crypto';
 const int = (v, d) => (v === undefined || v === '' ? d : Number(v));
 
 export function loadConfig(env = process.env, overrides = {}) {
-  const dataDir = path.resolve(overrides.dataDir ?? env.FREESPACE_DATA_DIR ?? './data');
+  const dataDir = path.resolve(overrides.dataDir ?? env.GREENROOM_DATA_DIR ?? './data');
   fs.mkdirSync(dataDir, { recursive: true });
   // Instance secret signs viewer cookies and document tokens; generated once, kept next to the data.
   const secretFile = path.join(dataDir, 'secret.key');
@@ -18,18 +18,18 @@ export function loadConfig(env = process.env, overrides = {}) {
     secret: fs.readFileSync(secretFile, 'utf8').trim(),
     host: env.HOST ?? '127.0.0.1',
     port: int(env.PORT, 8080),
-    publicUrl: env.FREESPACE_PUBLIC_URL ?? '',
-    trustProxy: env.FREESPACE_TRUST_PROXY === '1', // take the client IP from X-Forwarded-For (last hop)
-    maxUploadBytes: int(env.FREESPACE_MAX_UPLOAD_BYTES, 200 * 1024 * 1024),
-    maxFileBytes: int(env.FREESPACE_MAX_FILE_BYTES, 100 * 1024 * 1024),
+    publicUrl: env.GREENROOM_PUBLIC_URL ?? '',
+    trustProxy: env.GREENROOM_TRUST_PROXY === '1', // take the client IP from X-Forwarded-For (last hop)
+    maxUploadBytes: int(env.GREENROOM_MAX_UPLOAD_BYTES, 200 * 1024 * 1024),
+    maxFileBytes: int(env.GREENROOM_MAX_FILE_BYTES, 100 * 1024 * 1024),
     // A history bundle holds each blob up to three times (site/, history/blobs/, history.fi), plus the JSON documents.
-    maxImportBytes: int(env.FREESPACE_MAX_IMPORT_BYTES, 3 * int(env.FREESPACE_MAX_SPACE_BYTES, 2 * 1024 ** 3) + 64 * 1024 * 1024),
-    maxJsonBytes: int(env.FREESPACE_MAX_JSON_BYTES, 24 * 1024 * 1024),
-    maxSpaceBytes: int(env.FREESPACE_MAX_SPACE_BYTES, 2 * 1024 ** 3),
-    maxTotalBytes: int(env.FREESPACE_MAX_TOTAL_BYTES, 20 * 1024 ** 3),
-    sessionDays: int(env.FREESPACE_SESSION_DAYS, 30),
-    viewerMinutes: int(env.FREESPACE_VIEWER_MINUTES, 60),
-    gcIntervalHours: int(env.FREESPACE_GC_INTERVAL_HOURS, 12),
+    maxImportBytes: int(env.GREENROOM_MAX_IMPORT_BYTES, 3 * int(env.GREENROOM_MAX_SPACE_BYTES, 2 * 1024 ** 3) + 64 * 1024 * 1024),
+    maxJsonBytes: int(env.GREENROOM_MAX_JSON_BYTES, 24 * 1024 * 1024),
+    maxSpaceBytes: int(env.GREENROOM_MAX_SPACE_BYTES, 2 * 1024 ** 3),
+    maxTotalBytes: int(env.GREENROOM_MAX_TOTAL_BYTES, 20 * 1024 ** 3),
+    sessionDays: int(env.GREENROOM_SESSION_DAYS, 30),
+    viewerMinutes: int(env.GREENROOM_VIEWER_MINUTES, 60),
+    gcIntervalHours: int(env.GREENROOM_GC_INTERVAL_HOURS, 12),
     ...overrides,
   };
 }

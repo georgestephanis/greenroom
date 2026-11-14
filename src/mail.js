@@ -23,7 +23,7 @@ export const dotStuff = (text) => `${String(text).replace(/\r\n|\r|\n/g, '\r\n')
  * 'none' is only for a relay on this machine; credentials never cross the network in clear.
  */
 export async function sendMail(smtp, { to, subject, text }, timeoutMs = 15_000) {
-  const [from, rcpt, subj, host, helo] = [smtp.from, to, subject, smtp.host, smtp.helo || 'freespace'].map(cleanHeader);
+  const [from, rcpt, subj, host, helo] = [smtp.from, to, subject, smtp.host, smtp.helo || 'greenroom'].map(cleanHeader);
   cleanHeader(smtp.user);
   if (smtp.security === 'none' && !isLoopback(host)) throw new Error('Unencrypted SMTP is only allowed to a relay on this machine');
   let sock = smtp.security === 'tls' ? tls.connect({ host, port: smtp.port, servername: host }) : net.connect({ host, port: smtp.port });

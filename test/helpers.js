@@ -4,7 +4,7 @@ import path from 'node:path';
 import { createApp } from '../src/server.js';
 
 export async function boot(overrides = {}) {
-  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'freespace-'));
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'greenroom-'));
   const app = createApp({ dataDir, port: 0, ...overrides });
   await new Promise((r) => app.server.listen(0, '127.0.0.1', r));
   const base = `http://127.0.0.1:${app.server.address().port}`;

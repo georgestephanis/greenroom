@@ -124,7 +124,7 @@ test('rule 7: doc token is space-bound and injected into documents only', () => 
   assert.ok(!verifyDocToken('s', B, tok));
   assert.ok(!verifyDocToken('s', A, signDocToken('s', A, undefined, -1)));
   assert.deepEqual(verifyDocToken('s', A, signDocToken('s', A, { kind: 'link', subject: 'grt_x' })), { kind: 'link', subject: 'grt_x' });
-  assert.match(injectDocToken('<html><head><title>x</title></head>', tok), /<head><meta name="freespace-doc-token" content="/);
+  assert.match(injectDocToken('<html><head><title>x</title></head>', tok), /<head><meta name="greenroom-doc-token" content="/);
 });
 
 test('rule 8: preview iframe is sandboxed without allow-same-origin', async (x) => {
@@ -199,8 +199,8 @@ test('rule 7: the doc token goes only to documents (Sec-Fetch-Dest), never to ot
   t.db.prepare(`UPDATE spaces SET plugins_json = '["sqlite"]'`).run();
   const c = client(t.base);
   const body = async (p, dest) => (await c.fetch(p, { headers: dest ? { 'sec-fetch-dest': dest } : {} })).text();
-  assert.match(await body('/s/demo/', 'document'), /freespace-doc-token/);
+  assert.match(await body('/s/demo/', 'document'), /greenroom-doc-token/);
   for (const [p, dest] of [['/s/demo/', 'empty'], ['/s/demo/', 'script'], ['/s/demo/', undefined], ['/s/demo/a.css', 'document']]) {
-    assert.doesNotMatch(await body(p, dest), /freespace-doc-token/, `${p} ${dest}`);
+    assert.doesNotMatch(await body(p, dest), /greenroom-doc-token/, `${p} ${dest}`);
   }
 });

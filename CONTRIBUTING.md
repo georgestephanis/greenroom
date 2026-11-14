@@ -1,6 +1,6 @@
 # Contributing
 
-freespace is plain ESM JavaScript on Node 24+, with no dependencies and no build step.
+greenroom is plain ESM JavaScript on Node 24+, with no dependencies and no build step.
 
 ```bash
 npm test          # node:test, includes the path-mode security tests

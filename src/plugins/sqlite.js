@@ -304,13 +304,13 @@ async function readBuf(stream, cap) {
 const CLIENT = `(() => {
   const url = document.currentScript.src.replace(/db\\.js(\\?.*)?$/, 'db');
   const call = async (body) => {
-    const token = document.querySelector('meta[name="freespace-doc-token"]')?.content;
+    const token = document.querySelector('meta[name="greenroom-doc-token"]')?.content;
     const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-fs-doc-token': token || '' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'Request failed (' + r.status + ')');
     return j;
   };
-  window.freespace = Object.assign(window.freespace || {}, { db: {
+  window.greenroom = Object.assign(window.greenroom || {}, { db: {
     tables: () => call({ op: 'tables' }).then((j) => j.tables),
     select: (table, o = {}) => call({ op: 'select', table, ...o }).then((j) => j.rows),
     insert: (table, values) => call({ op: 'insert', table, values }),

@@ -268,7 +268,7 @@ test('MCP tools: create_space joins the grant, publish/read/diff/rollback work, 
   try {
     const { access_token: tok } = await connect(t, ada, { spaces: [], perms: ['read', 'publish'], create: true, scope: 'spaces:create read publish' });
     const init = (await mcp(t, tok, 'initialize', { protocolVersion: '1999-01-01' })).body.result;
-    assert.equal(init.serverInfo.name, 'freespace');
+    assert.equal(init.serverInfo.name, 'greenroom');
     assert.equal(init.protocolVersion, '2025-06-18', 'answers with a version it supports, not an echo');
     const made = await call(t, tok, 'create_space', { name: 'Gamma' });
     assert.equal(made.body.result.structuredContent.space.slug, 'gamma');

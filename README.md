@@ -1,4 +1,4 @@
-# freespace
+# greenroom
 
 A small, self-hosted place for a team (3–10 people) to host the things their LLM agents make: reports, dashboards, prototypes, docs. Publish a folder of static files, get a URL, keep every version, roll back in a click.
 
@@ -14,18 +14,18 @@ This release covers milestones M0–M6: the core, OAuth and MCP, client sharing 
 ## Run it
 
 ```bash
-node bin/freespace.js serve          # http://127.0.0.1:8080
+node bin/greenroom.js serve          # http://127.0.0.1:8080
 ```
 
-Open it, create the admin account at `/setup`, then invite your team from the Team page. Put a TLS-terminating proxy in front for real use (the session cookie is `Secure`; browsers allow it on `localhost` for trying things out). A sample unit file is in `deploy/freespace.service`.
+Open it, create the admin account at `/setup`, then invite your team from the Team page. Put a TLS-terminating proxy in front for real use (the session cookie is `Secure`; browsers allow it on `localhost` for trying things out). A sample unit file is in `deploy/greenroom.service`.
 
 | Variable | Default | |
 |---|---|---|
-| `FREESPACE_DATA_DIR` | `./data` | database, blobs, signing secret |
+| `GREENROOM_DATA_DIR` | `./data` | database, blobs, signing secret |
 | `HOST` / `PORT` | `127.0.0.1` / `8080` | |
-| `FREESPACE_PUBLIC_URL` | | used for invite and email links and as the OAuth issuer; set it in production |
-| `FREESPACE_TRUST_PROXY` | | `1` behind a proxy that sets `X-Forwarded-For`, so login throttling sees real client IPs |
-| `FREESPACE_MAX_UPLOAD_BYTES` | 200 MB | also `..._MAX_IMPORT_BYTES` (bundle imports, default 3 × space size + 64 MB), `..._MAX_FILE_BYTES`, `..._MAX_SPACE_BYTES`, `..._MAX_TOTAL_BYTES` |
+| `GREENROOM_PUBLIC_URL` | | used for invite and email links and as the OAuth issuer; set it in production |
+| `GREENROOM_TRUST_PROXY` | | `1` behind a proxy that sets `X-Forwarded-For`, so login throttling sees real client IPs |
+| `GREENROOM_MAX_UPLOAD_BYTES` | 200 MB | also `..._MAX_IMPORT_BYTES` (bundle imports, default 3 × space size + 64 MB), `..._MAX_FILE_BYTES`, `..._MAX_SPACE_BYTES`, `..._MAX_TOTAL_BYTES` |
 
 It idles at well under 100 MB of RAM; `npm test` boots it with a 256 MB heap cap and checks RSS.
 
@@ -50,8 +50,8 @@ Trade-offs you will notice: pages can't use their own `localStorage` or cookies 
 
 Each space is **Team only** (the default), **Anyone with the link**, or **Public**. Team members can always view.
 
-- **Team only.** Opening a space while signed in sets a short-lived viewer cookie (`FREESPACE_VIEWER_MINUTES`, default 60) bound to the space and the dashboard session, because the Strict dashboard cookie doesn't reach sandboxed subresource requests. Signing out ends it.
-- **Anyone with the link.** Each space can have several links, each with a label, optional expiry, password and max uses. Expiry is either `expires_in` (`30m`, `12h`, `7d`) or `expires_at`, an ISO-8601 date and time with a timezone (not both), at most a year out. The dashboard offers 1 day, 1 week, 30 days or a custom local date and time, which its script sends as UTC. Opening `/s/{slug}/?key=…` checks the link, sets a viewer cookie bound to the space and that link (`Path=/s/{slug}/; HttpOnly; Secure; SameSite=None`), then redirects to the URL without the key. The cookie lasts until the link expires or the session length (`FREESPACE_SESSION_DAYS`, default 30), whichever is sooner. The link row is checked on every request, so revoking or expiring a link cuts off its cookies at once. Keys are stored as sha256, so the full URL is shown only once, when the link is created. A use is spent when a cookie is issued, not per view. A link with a password or max uses shows a page with an Open button, and only that page's POST spends a use, so link previews (Slack, Outlook Safe Links) and HEAD requests never burn one. Those forms refuse cross-site posts. Passwords need at least 8 characters. Attempts are limited to 10 per 15 minutes per link and client IP, and 50 an hour per link across all IPs. Each link records `first_viewed_at`, `last_viewed_at` and `view_count`. A view is a successful page load, counted at most once a minute.
+- **Team only.** Opening a space while signed in sets a short-lived viewer cookie (`GREENROOM_VIEWER_MINUTES`, default 60) bound to the space and the dashboard session, because the Strict dashboard cookie doesn't reach sandboxed subresource requests. Signing out ends it.
+- **Anyone with the link.** Each space can have several links, each with a label, optional expiry, password and max uses. Expiry is either `expires_in` (`30m`, `12h`, `7d`) or `expires_at`, an ISO-8601 date and time with a timezone (not both), at most a year out. The dashboard offers 1 day, 1 week, 30 days or a custom local date and time, which its script sends as UTC. Opening `/s/{slug}/?key=…` checks the link, sets a viewer cookie bound to the space and that link (`Path=/s/{slug}/; HttpOnly; Secure; SameSite=None`), then redirects to the URL without the key. The cookie lasts until the link expires or the session length (`GREENROOM_SESSION_DAYS`, default 30), whichever is sooner. The link row is checked on every request, so revoking or expiring a link cuts off its cookies at once. Keys are stored as sha256, so the full URL is shown only once, when the link is created. A use is spent when a cookie is issued, not per view. A link with a password or max uses shows a page with an Open button, and only that page's POST spends a use, so link previews (Slack, Outlook Safe Links) and HEAD requests never burn one. Those forms refuse cross-site posts. Passwords need at least 8 characters. Attempts are limited to 10 per 15 minutes per link and client IP, and 50 an hour per link across all IPs. Each link records `first_viewed_at`, `last_viewed_at` and `view_count`. A view is a successful page load, counted at most once a minute.
 - **Public.** No check. `X-Robots-Tag: noindex` is on unless you turn off "hide from search engines".
 
 Switching a space away from "Anyone with the link" pauses its links. When a person switches it back, they are restored with their counts; when an agent does, they stay paused. Creating a link on a team-only space switches it to "Anyone with the link" and enables only the new link; a person can resume paused links one at a time from the dashboard. A Public space takes no share links and drops `?key=` from the URL. The password, not-found and expired-link pages use the instance branding (agency name, logo URL, accent colour) set on the Instance page.
@@ -85,8 +85,8 @@ All of this is on the **Instance** and **Team** pages, admins only.
 
 ## Export and import
 
-Each space page has **Download current site** (`{slug}.freespace.zip`) and **Download with full history**
-(`{slug}.freespace-history.zip`, which adds every version, the activity log and a `git fast-import` stream). The Spaces page
+Each space page has **Download current site** (`{slug}.greenroom.zip`) and **Download with full history**
+(`{slug}.greenroom-history.zip`, which adds every version, the activity log and a `git fast-import` stream). The Spaces page
 has an **Import** card that takes either file; an existing slug is never overwritten unless you tick Replace.
 Share links, passwords and tokens are never exported. Format, limits and what is left out: [docs/bundle-spec.md](docs/bundle-spec.md).
 
@@ -105,4 +105,4 @@ This project was written with substantial help from Claude (Anthropic) via Claud
 
 ## Plugins
 
-Plugins are off until an admin turns them on (Instance page, or `POST /api/admin/plugins/:name`), and each space then opts in on its own page (`PUT /api/spaces/:slug/plugins/:name`, session only). Bundled: `sqlite` (a per-space SQLite database with a table-by-table browser policy, MCP tools and version-linked snapshots) and `watermark` (a client banner on share-link views). Extra plugins load from `FREESPACE_PLUGINS=/path/a.js,/path/b.js`. Plugins never see the core database or any credential, and can't relax the CSP, cookie or CORS rules. Their files go in both export zips; a plugin missing on the importing instance keeps its data and warns. See [docs/writing-a-plugin.md](docs/writing-a-plugin.md).
+Plugins are off until an admin turns them on (Instance page, or `POST /api/admin/plugins/:name`), and each space then opts in on its own page (`PUT /api/spaces/:slug/plugins/:name`, session only). Bundled: `sqlite` (a per-space SQLite database with a table-by-table browser policy, MCP tools and version-linked snapshots) and `watermark` (a client banner on share-link views). Extra plugins load from `GREENROOM_PLUGINS=/path/a.js,/path/b.js`. Plugins never see the core database or any credential, and can't relax the CSP, cookie or CORS rules. Their files go in both export zips; a plugin missing on the importing instance keeps its data and warns. See [docs/writing-a-plugin.md](docs/writing-a-plugin.md).

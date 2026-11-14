@@ -13,8 +13,8 @@ export function layout(title, cred, body, { nav = true } = {}) {
   const csrf = cred?.csrf ? `<meta name="csrf" content="${esc(cred.csrf)}">` : '';
   const admin = cred?.user?.role === 'admin';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} · freespace</title>${csrf}<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
-<body>${nav && cred ? `<header><a class="brand" href="/">freespace</a><nav><a href="/">Spaces</a><a href="/access">Access</a>${admin ? '<a href="/team">Team</a><a href="/instance">Instance</a>' : ''}
+<title>${esc(title)} · greenroom</title>${csrf}<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<body>${nav && cred ? `<header><a class="brand" href="/">greenroom</a><nav><a href="/">Spaces</a><a href="/access">Access</a>${admin ? '<a href="/team">Team</a><a href="/instance">Instance</a>' : ''}
 <form method="post" action="/api/logout" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/login"><button class="link">Sign out (${esc(cred.user.display_name || cred.user.username)})</button></form></nav></header>` : ''}
 <main>${body}</main></body></html>`;
 }
@@ -37,7 +37,7 @@ export function spacesPage(cred, spaces) {
 <section class="card"><h2>New space</h2><form method="post" action="/api/spaces">${hidden(cred)}<input type="hidden" name="_next" value="__space__">${field('name', 'Name')}<button>Create</button></form></section>
 <section class="card"><h2>Import a space</h2><form data-upload="/api/import" data-goto="space"><input type="file" name="zip" accept=".zip,application/zip" required>
 <input name="slug" placeholder="Slug (optional; defaults to the one in the bundle)"><label class="check"><input type="checkbox" name="replace" value="1"> Replace the space if that slug exists (its versions are replaced; links and activity stay)</label>
-<button>Import</button><span class="status"></span></form><small>Takes a .freespace.zip or .freespace-history.zip exported from freespace.</small></section>`);
+<button>Import</button><span class="status"></span></form><small>Takes a .greenroom.zip or .greenroom-history.zip exported from greenroom.</small></section>`);
 }
 
 export function spacePage(cred, space, versions, warnings, links, plugins = []) {

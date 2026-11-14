@@ -284,7 +284,7 @@ test('share keys are stored as sha256; the URL is shown once, and the dashboard 
 });
 
 test('migration 4 hashes keys stored in plaintext by migration 3', () => {
-  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'freespace-mig-'));
+  const dir = fs.mkdtempSync(nodePath.join(os.tmpdir(), 'greenroom-mig-'));
   const file = nodePath.join(dir, 'db.sqlite');
   try {
     const old = new DatabaseSync(file);

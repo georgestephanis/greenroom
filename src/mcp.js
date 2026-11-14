@@ -152,7 +152,7 @@ export function createMcp({ store, db, plugins }) {
     if (msg.id === undefined) return { status: 202 }; // notification
     switch (msg.method) {
       case 'initialize': // ponytail: one supported version; answer with it whatever the client asked for
-        return reply({ protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'freespace', version: '0.4.0' } });
+        return reply({ protocolVersion: PROTOCOL, capabilities: { tools: {} }, serverInfo: { name: 'greenroom', version: '0.4.0' } });
       case 'ping': return reply({});
       case 'tools/list': return reply({ tools: [...TOOLS, ...pluginTools()] });
       case 'tools/call': {

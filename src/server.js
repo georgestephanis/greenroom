@@ -43,7 +43,7 @@ export function createApp(overrides = {}) {
   const store = new Store(db, cas, config);
   const auth = new Auth(db, config);
   const oauth = new OAuth({ db, auth, config });
-  // Plugins: the bundled sqlite and watermark plus any in config.plugins (definitions, loaded by bin/freespace.js).
+  // Plugins: the bundled sqlite and watermark plus any in config.plugins (definitions, loaded by bin/greenroom.js).
   const plugins = createPlugins({ store, config, installed: config.plugins ?? [] });
   store.plugins = plugins;
   const mcp = createMcp({ store, db, plugins });
@@ -323,7 +323,7 @@ export function createApp(overrides = {}) {
     }
   }
 
-  // Import a freespace bundle as a new space. A person's act (like deleting or going public), never an agent's.
+  // Import a greenroom bundle as a new space. A person's act (like deleting or going public), never an agent's.
   let importing = 0; // one at a time: an import holds a spooled zip and a long transaction
   async function importSpace(req, res, url, cred) {
     requireSession(cred);
@@ -352,7 +352,7 @@ export function createApp(overrides = {}) {
       store.log(cred, 'space.exported', space.id, { history }, { type: 'space', id: space.id });
       res.writeHead(200, {
         'Content-Type': 'application/zip', 'Content-Length': fs.statSync(tmp).size,
-        'Content-Disposition': `attachment; filename="${space.slug}.freespace${history ? '-history' : ''}.zip"`,
+        'Content-Disposition': `attachment; filename="${space.slug}.greenroom${history ? '-history' : ''}.zip"`,
       });
       await pipeline(fs.createReadStream(tmp), res);
     } finally {
@@ -366,7 +366,7 @@ export function createApp(overrides = {}) {
     if (p === '/assets/app.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(ui.APP_JS); }
     if (p === '/assets/app.css') { res.setHeader('Content-Type', 'text/css'); return res.end(ui.APP_CSS); }
     if (p === '/login') return cred ? redirect(res, '/', 302) : html(res, 200, ui.authPage('Sign in', null, url.searchParams.get('error'), ui.loginFields + (people.signupOpen() ? '<p><small>New here? <a href="/signup">Sign up with your work email</a></small></p>' : ''), '/api/login', 'Sign in', `${url.searchParams.get('confirmed') ? '<p class="ok">Email confirmed. Sign in to continue.</p>' : ''}<input type="hidden" name="_next" value="${esc2(safeNext(url.searchParams.get('next')))}">`));
-    if (p === '/setup') return auth.userCount() ? redirect(res, '/login', 302) : html(res, 200, ui.authPage('Set up freespace', null, url.searchParams.get('error'), ui.setupFields, '/api/setup', 'Create admin account'));
+    if (p === '/setup') return auth.userCount() ? redirect(res, '/login', 302) : html(res, 200, ui.authPage('Set up greenroom', null, url.searchParams.get('error'), ui.setupFields, '/api/setup', 'Create admin account'));
     let m = /^\/invite\/([\w-]+)$/.exec(p);
     if (m) return html(res, 200, ui.authPage('Join the team', null, url.searchParams.get('error'), ui.setupFields, '/api/invites/accept', 'Join', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     if (p === '/signup') return people.signupOpen() ? html(res, 200, ui.signupPage(cred, url.searchParams.get('sent'), url.searchParams.get('error'))) : html(res, 404, ui.messagePage(null, 'Not available', 'Self-signup is not turned on here. Ask an admin for an invite.'));

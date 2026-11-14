@@ -1,4 +1,4 @@
-// freespace is self-contained: nothing may import from outside this directory (in particular ../core).
+// greenroom is self-contained: nothing may import from outside this directory (in particular ../core).
 import fs from 'node:fs';
 import path from 'node:path';
 

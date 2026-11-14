@@ -1,4 +1,4 @@
-# Writing a freespace plugin
+# Writing a greenroom plugin
 
 A plugin is one ES module whose default export comes from `definePlugin`. The smallest real one is
 [`watermark`](../src/plugins/watermark.js); this guide walks through it.
@@ -53,7 +53,7 @@ the sandbox CSP stays on every response. A hook runs only when the plugin is ins
 
 ## Installing
 
-Bundled plugins ship in `src/plugins/`. Others load from `FREESPACE_PLUGINS=/abs/a.js,/abs/b.js`. Enable on the Instance page,
+Bundled plugins ship in `src/plugins/`. Others load from `GREENROOM_PLUGINS=/abs/a.js,/abs/b.js`. Enable on the Instance page,
 then switch on per space. Keep untrusted code out: a plugin runs in the server process.
 
 ## Test it

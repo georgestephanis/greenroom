@@ -1,0 +1,20 @@
+# Example unit: copy to /etc/systemd/system/greenroom.service, adjust paths, put a TLS proxy (Caddy, nginx) in front.
+[Unit]
+Description=greenroom
+After=network.target
+
+[Service]
+User=greenroom
+WorkingDirectory=/opt/greenroom
+Environment=GREENROOM_DATA_DIR=/var/lib/greenroom
+Environment=GREENROOM_PUBLIC_URL=https://spaces.example.com
+Environment=HOST=127.0.0.1
+Environment=PORT=8080
+ExecStart=/usr/bin/node bin/greenroom.js serve
+Restart=on-failure
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/greenroom
+
+[Install]
+WantedBy=multi-user.target

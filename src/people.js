@@ -18,7 +18,7 @@ export class People {
 
   // The SMTP password is encrypted at rest with a key derived from the instance secret (secret.key, mode 0600),
   // so a copy of control.db alone does not reveal it. It is never sent back to the browser or logged.
-  #key() { return Buffer.from(crypto.hkdfSync('sha256', this.config.secret, '', 'freespace smtp password', 32)); }
+  #key() { return Buffer.from(crypto.hkdfSync('sha256', this.config.secret, '', 'greenroom smtp password', 32)); }
   #seal(pw) {
     const iv = crypto.randomBytes(12), c = crypto.createCipheriv('aes-256-gcm', this.#key(), iv);
     const ct = Buffer.concat([c.update(pw, 'utf8'), c.final()]);
@@ -67,7 +67,7 @@ export class People {
     const pass = b.pass ? this.#seal(String(b.pass)) : user ? prev?.pass ?? null : null;
     if (!prev && this.s.reconfirmDays) this.s.reconfirmSince = now(); // re-confirmation comes back on: a fresh N days
     this.s.smtp = { host, port, security, user, from, pass };
-    // Links in mail point here: FREESPACE_PUBLIC_URL, else the origin the admin saved these settings from,
+    // Links in mail point here: GREENROOM_PUBLIC_URL, else the origin the admin saved these settings from,
     // never the Host header of the request that triggers a mail (a forged Host would steal signup links).
     this.s.origin = this.config.publicUrl || origin;
     this.#save();
@@ -79,7 +79,7 @@ export class People {
   /** Awaited: the admin sees the server's answer. */
   async test(cred) {
     if (!this.s.smtp) throw httpErr(400, 'Save SMTP settings first');
-    try { await this.send(this.#smtp(), { to: cred.user.username, subject: 'freespace test email', text: 'SMTP is working. This message was sent from the Instance page.\n' }); }
+    try { await this.send(this.#smtp(), { to: cred.user.username, subject: 'greenroom test email', text: 'SMTP is working. This message was sent from the Instance page.\n' }); }
     catch (e) { throw httpErr(400, `Sending failed: ${e.message}`); }
     this.store.log(cred, 'smtp.tested', null);
   }
@@ -87,7 +87,7 @@ export class People {
   #mail(to, subject, text) {
     const m = this.#smtp();
     if (!m) return;
-    this.send(m, { to, subject, text }).catch((e) => console.error(`freespace: mail not sent: ${e.message}`));
+    this.send(m, { to, subject, text }).catch((e) => console.error(`greenroom: mail not sent: ${e.message}`));
   }
 
   setSignup(cred, b) {
@@ -142,7 +142,7 @@ export class People {
     const e = normEmail(email);
     if (!e) throw httpErr(400, 'Enter a valid email address');
     setImmediate(() => {
-      try { this.#signup(e); } catch (err) { console.error(`freespace: signup mail not sent: ${err.message}`); }
+      try { this.#signup(e); } catch (err) { console.error(`greenroom: signup mail not sent: ${err.message}`); }
     });
   }
   #signup(e) {
@@ -152,10 +152,10 @@ export class People {
     const outcome = !allowed ? 'not_allowed' : existing ? 'existing' : 'link';
     this.store.log(null, 'signup.requested', null, { email: e, outcome });
     if (outcome === 'existing') {
-      this.#mail(e, 'You already have a freespace account', `Someone (hopefully you) asked to sign up at ${this.#origin()} with this address, but it already has an account.\n\nSign in: ${this.#origin()}/login\n\nIf this wasn't you, you can ignore this email.\n`);
+      this.#mail(e, 'You already have a greenroom account', `Someone (hopefully you) asked to sign up at ${this.#origin()} with this address, but it already has an account.\n\nSign in: ${this.#origin()}/login\n\nIf this wasn't you, you can ignore this email.\n`);
     } else if (outcome === 'link') {
       const token = this.#token('signup', e);
-      this.#mail(e, 'Confirm your freespace signup', `Follow this link within 30 minutes to finish creating your account:\n\n${this.#origin()}/signup/${token}\n\nIt works once. If you didn't ask for this, ignore this email.\n`);
+      this.#mail(e, 'Confirm your greenroom signup', `Follow this link within 30 minutes to finish creating your account:\n\n${this.#origin()}/signup/${token}\n\nIt works once. If you didn't ask for this, ignore this email.\n`);
     }
   }
 
@@ -180,7 +180,7 @@ export class People {
       .get(u.id, new Date(Date.now() - 5 * 60e3).toISOString());
     if (recent || !this.auth.reconfirm) return;
     const token = this.#token('reconfirm', u.username, u.id);
-    this.#mail(u.username, 'Confirm your email for freespace', `Your freespace account at ${this.#origin()} needs you to confirm this address every ${this.s.reconfirmDays} days.\n\nConfirm within 30 minutes:\n\n${this.#origin()}/confirm/${token}\n\nThen sign in again.\n`);
+    this.#mail(u.username, 'Confirm your email for greenroom', `Your greenroom account at ${this.#origin()} needs you to confirm this address every ${this.s.reconfirmDays} days.\n\nConfirm within 30 minutes:\n\n${this.#origin()}/confirm/${token}\n\nThen sign in again.\n`);
   }
   confirm(token) {
     const row = this.#claim('reconfirm', token);

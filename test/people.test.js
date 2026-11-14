@@ -65,7 +65,7 @@ test('SMTP client: plain dialogue, AUTH PLAIN, CRLF and dot-stuffing', async () 
   try {
     await sendMail(smtpFor(mail.port, { user: 'u', pass: 'päss' }), { to: 'bob@example.com', subject: 'Hi é', text: 'one\n.two\n..three\r\nlast' });
     const m = await mail.next();
-    assert.equal(m.cmds[0], 'EHLO freespace');
+    assert.equal(m.cmds[0], 'EHLO greenroom');
     assert.equal(Buffer.from(m.cmds[1].split(' ')[2], 'base64').toString(), '\0u\0päss');
     assert.deepEqual(m.cmds.slice(2, 5), ['MAIL FROM:<noreply@example.com>', 'RCPT TO:<bob@example.com>', 'DATA']);
     assert.ok(m.lines.includes('..two') && m.lines.includes('...three'), 'leading dots doubled on the wire');

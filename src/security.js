@@ -96,7 +96,7 @@ export function verifyDocToken(secret, space, token) {
   return spaceId === space.id && Number(exp) >= Date.now() ? { kind, subject } : null;
 }
 export function injectDocToken(html, token) {
-  const tag = `<meta name="freespace-doc-token" content="${token}">`;
+  const tag = `<meta name="greenroom-doc-token" content="${token}">`;
   return /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, (m) => m + tag) : tag + html;
 }
 export const isDocumentRequest = (req) => ['document', 'iframe'].includes(req.headers['sec-fetch-dest']);

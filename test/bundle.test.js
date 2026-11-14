@@ -74,7 +74,7 @@ test('current export has space.json and site/ only, and nothing secret', async (
   for (const secret of [link.url.split('key=')[1], 'hunter2-secret', minted.token, minted.token.slice(0, 12)]) assert.ok(!blob.includes(secret), 'secret leaked');
   assert.ok(!/secret_hash|password_hash|key_hash|scrypt|raw_token/i.test(blob));
   const doc = JSON.parse(all.get('space.json'));
-  assert.equal(doc.format, 'freespace-bundle/1');
+  assert.equal(doc.format, 'greenroom-bundle/1');
   assert.equal(doc.kind, 'history');
 });
 
@@ -135,7 +135,7 @@ test('replace and import are for people, not agent credentials', async (x) => {
 
 test('a current bundle imports its site as one version', async (x) => {
   const { t, admin } = await world(x);
-  const r = await imp(admin, fs.readFileSync(FIX + 'current.freespace.zip'));
+  const r = await imp(admin, fs.readFileSync(FIX + 'current.greenroom.zip'));
   assert.equal(r.status, 201, await r.clone().text());
   const j = await r.json();
   assert.equal(j.versions, 1);
@@ -150,7 +150,7 @@ test('a current bundle imports its site as one version', async (x) => {
 
 test('committed fixture bundles import and keep their history', async (x) => {
   const { t, admin } = await world(x);
-  const r = await imp(admin, fs.readFileSync(FIX + 'history.freespace-history.zip'));
+  const r = await imp(admin, fs.readFileSync(FIX + 'history.greenroom-history.zip'));
   assert.equal(r.status, 201, await r.clone().text());
   const sp = t.store.space('fixture');
   assert.equal(sp.id, 'spc_fix');
@@ -183,12 +183,12 @@ test('history.fi loads with git fast-import: one commit per version, agents name
     const tree = git('ls-tree', '-r', '-z', '--name-only', `main~${vs.length - 1 - i}`).split('\0').filter(Boolean).sort();
     assert.deepEqual(tree, t.store.manifest(v.id).map((f) => f.path).sort(), `tree of v${v.number}`);
   }
-  assert.match(git('log', '-1', '--format=%B', 'main'), /Freespace-Version: ver_/);
+  assert.match(git('log', '-1', '--format=%B', 'main'), /Greenroom-Version: ver_/);
 });
 
 test('a history that restarts from a new root still fast-imports', async (x) => {
   const { admin } = await world(x);
-  assert.equal((await imp(admin, fs.readFileSync(FIX + 'restart.freespace-history.zip'))).status, 201);
+  assert.equal((await imp(admin, fs.readFileSync(FIX + 'restart.greenroom-history.zip'))).status, 201);
   const fi = (await readAll(await download(x, admin, '/spaces/fixture/export?history=1'))).get('history/history.fi');
   const git = fastImport(x, fi);
   assert.equal(git('rev-list', '--count', 'main').trim(), '3');
@@ -206,7 +206,7 @@ test('a branched history (publish with base:N) keeps every version reachable fro
   const fi = (await readAll(await download(x, admin, '/spaces/b/export?history=1'))).get('history/history.fi');
   const git = fastImport(x, fi);
   assert.deepEqual(git('log', '--reverse', '--format=%s', 'main').trim().split('\n'), ['v1', 'v2', 'v3', 'v4']);
-  assert.match(git('log', '--format=%B', '--grep=v3', 'main'), /Freespace-Parent: ver_/);
+  assert.match(git('log', '--format=%B', '--grep=v3', 'main'), /Greenroom-Parent: ver_/);
   assert.deepEqual(git('ls-tree', '-r', '--name-only', 'main~1').trim().split('\n'), ['a.txt', 'c.txt']);
 });
 
@@ -232,7 +232,7 @@ test('MCP export_space returns a signed link that works once signed and not othe
   const got = await fetch(t.base + u.pathname + u.search);
   assert.equal(got.status, 200);
   assert.equal(got.headers.get('content-type'), 'application/zip');
-  assert.match(got.headers.get('content-disposition'), /alpha\.freespace-history\.zip/);
+  assert.match(got.headers.get('content-disposition'), /alpha\.greenroom-history\.zip/);
   assert.equal(Buffer.from(await got.arrayBuffer()).subarray(0, 2).toString(), 'PK');
   const tampered = new URL(u); tampered.searchParams.set('sig', '0'.repeat(64));
   assert.equal((await fetch(t.base + tampered.pathname + tampered.search)).status, 404);
@@ -261,7 +261,7 @@ test('export_space needs the export scope', async (x) => {
 const HOSTILE = {
   'not a zip': () => Buffer.from('definitely not a zip'),
   'no space.json': () => toZip(historyEntries(({ entries }) => entries.splice(0, 1))),
-  'unknown format': () => toZip(historyEntries(({ doc }) => { doc.format = 'freespace-bundle/9'; })),
+  'unknown format': () => toZip(historyEntries(({ doc }) => { doc.format = 'greenroom-bundle/9'; })),
   'bad kind': () => toZip(historyEntries(({ doc }) => { doc.kind = 'weird'; })),
   'history kind without versions': () => toZip(historyEntries(({ doc, entries }) => { doc.kind = 'history'; entries.splice(1, 1); })),
   'space.json not json': () => makeZip([{ name: 'space.json', data: '{nope' }]),

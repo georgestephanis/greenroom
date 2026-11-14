@@ -1,5 +1,5 @@
 // Control database. Shared tables (spaces, versions, manifest_files, users, sessions, activity_log,
-// grants, api_keys) keep homefast's column names and types; freespace-only data lives in NEW
+// grants, api_keys) keep homefast's column names and types; greenroom-only data lives in NEW
 // columns/tables so a later homefast import is an ordinary migration (issue #214 section 8).
 import { DatabaseSync } from 'node:sqlite';
 import { sha256hex } from './util.js';
@@ -17,7 +17,7 @@ export const MIGRATIONS = [
     updated_at TEXT NOT NULL,
     noindex INTEGER NOT NULL DEFAULT 1,
     archived_at TEXT,
-    -- freespace-only:
+    -- greenroom-only:
     privacy TEXT NOT NULL DEFAULT 'team',   -- team | link | public  (link lands in M3)
     plugins_json TEXT NOT NULL DEFAULT '[]'
   );
@@ -32,7 +32,7 @@ export const MIGRATIONS = [
     total_bytes INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     finalized_at TEXT,
-    -- freespace-only (history, section 5):
+    -- greenroom-only (history, section 5):
     parent_version_id TEXT,
     author_credential_id TEXT,
     author_name TEXT,
@@ -64,7 +64,7 @@ export const MIGRATIONS = [
     updated_at TEXT NOT NULL,
     last_login_at TEXT,
     disabled_at TEXT,
-    display_name TEXT                               -- freespace-only
+    display_name TEXT                               -- greenroom-only
   );
   CREATE TABLE sessions (
     id TEXT PRIMARY KEY,
@@ -93,7 +93,7 @@ export const MIGRATIONS = [
   );
   CREATE INDEX idx_activity_log_space_created ON activity_log(space_id, created_at);
 
-  -- Agent tokens / OAuth grants (M2). homefast api_keys columns, plus freespace-only scope columns.
+  -- Agent tokens / OAuth grants (M2). homefast api_keys columns, plus greenroom-only scope columns.
   CREATE TABLE api_keys (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -135,14 +135,14 @@ export const MIGRATIONS = [
     rotated_at TEXT,
     updated_at TEXT,
     token_hint TEXT,
-    -- freespace-only (per-link view tracking):
+    -- greenroom-only (per-link view tracking):
     disabled_at TEXT,
     first_viewed_at TEXT,
     view_count INTEGER NOT NULL DEFAULT 0
   );
   CREATE INDEX idx_grants_space ON grants(space_id);
 
-  -- freespace-only
+  -- greenroom-only
   CREATE TABLE invites (
     id TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL UNIQUE,
@@ -155,7 +155,7 @@ export const MIGRATIONS = [
   );
   CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT);
   `,
-  // M2 (freespace-only): OAuth. The grant itself is an api_keys row (kind 'oauth'); these hang off it,
+  // M2 (greenroom-only): OAuth. The grant itself is an api_keys row (kind 'oauth'); these hang off it,
   // so revoking or deleting the grant kills every token issued under it.
   `
   CREATE TABLE oauth_tokens (
@@ -187,7 +187,7 @@ export const MIGRATIONS = [
   );
   `,
   // M3: share links. The key lookup is one indexed read per request (section 6); last_viewed_at is
-  // freespace-only view tracking next to first_viewed_at and view_count.
+  // greenroom-only view tracking next to first_viewed_at and view_count.
   `
   ALTER TABLE grants ADD COLUMN last_viewed_at TEXT;
   CREATE INDEX idx_grants_token ON grants(raw_token);
@@ -206,7 +206,7 @@ export const MIGRATIONS = [
     settings_json TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (space_id, plugin)
   );`,
-  // M6 (freespace-only): people. Single-use emailed links (signup, re-confirmation), stored as sha256.
+  // M6 (greenroom-only): people. Single-use emailed links (signup, re-confirmation), stored as sha256.
   `
   ALTER TABLE users ADD COLUMN email_confirmed_at TEXT;
   CREATE TABLE email_tokens (

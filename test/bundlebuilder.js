@@ -1,4 +1,4 @@
-// Hand-built freespace bundles for tests and for the committed fixtures (scripts/make-fixtures.js).
+// Hand-built greenroom bundles for tests and for the committed fixtures (scripts/make-fixtures.js).
 // Deterministic: fixed timestamps and ids, so regenerating produces the same bytes.
 import crypto from 'node:crypto';
 import { ZipWriter } from '../src/zip.js';
@@ -17,7 +17,7 @@ export function historyEntries(mutate) {
       files: [file('index.html', blobs.two, 'text/html; charset=utf-8'), file('a.css', blobs.css, 'text/css; charset=utf-8')] },
   ];
   const doc = {
-    format: 'freespace-bundle/1', kind: 'history', exported_at: T(3), generator: { name: 'fixture', version: '1' },
+    format: 'greenroom-bundle/1', kind: 'history', exported_at: T(3), generator: { name: 'fixture', version: '1' },
     space: { id: 'spc_fix', slug: 'fixture', name: 'Fixture space', privacy: 'team', noindex: true, owner_id: 'usr_fixada', created_at: T(1), updated_at: T(2), live_version_id: 'ver_fix2', plugins: [] },
   };
   const entries = [{ name: 'space.json', data: null }, { name: 'history/versions.json', data: null }];
@@ -33,7 +33,7 @@ export function historyEntries(mutate) {
 export function currentEntries(mutate) {
   const a = Buffer.from('<p>just the site</p>'), b = Buffer.from('');
   const doc = {
-    format: 'freespace-bundle/1', kind: 'current', exported_at: T(3), generator: { name: 'fixture', version: '1' },
+    format: 'greenroom-bundle/1', kind: 'current', exported_at: T(3), generator: { name: 'fixture', version: '1' },
     space: { id: 'spc_cur', slug: 'current-fixture', name: 'Current fixture', privacy: 'public', noindex: false, created_at: T(1), updated_at: T(2), live_version_id: 'ver_cur1', plugins: ['sqlite'] },
     live_version: { id: 'ver_cur1', number: 4, author: 'Claude (via Ada)', source: 'mcp', message: 'Latest', created_at: T(2) },
   };

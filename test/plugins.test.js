@@ -75,7 +75,7 @@ test('loader: a plugin sees a narrow ctx, never core tables or credentials', asy
   assert.equal(seen.cas.storeBuffer, undefined, 'no write-by-hash into the shared CAS beyond streaming');
   const flat = JSON.stringify(Object.keys(seen));
   assert.doesNotMatch(flat, /credential|session|csrf|secret|password/i);
-  const tokenValue = /freespace-doc-token" content="([^"]+)"/.exec(html);
+  const tokenValue = /greenroom-doc-token" content="([^"]+)"/.exec(html);
   assert.equal(tokenValue, null, 'a plugin without the sqlite transform gets no doc token for free');
   // The route handler is handed the request data only, no credential and no db.
   const r = await fetch(t.base + '/s/demo/_fs/who', { headers: { 'sec-fetch-site': 'same-origin' } });
@@ -132,7 +132,7 @@ test('watermark: the 404 page gets the banner and the doc token too', async (x) 
   assert.equal(r.status, 404);
   const html = await r.text();
   assert.match(html, /Confidential — prepared for Acme/);
-  assert.match(html, /freespace-doc-token/);
+  assert.match(html, /greenroom-doc-token/);
 });
 
 test('watermark: off by default, and stored files never change', async (x) => {
@@ -158,7 +158,7 @@ test('watermark: the link label and the template are HTML-escaped', async (x) =>
 
 // ------------------------------------------------------------------ sqlite
 
-const docToken = async (c) => /freespace-doc-token" content="([^"]+)"/.exec(await (await c.fetch('/s/demo/', { headers: DOC })).text())?.[1];
+const docToken = async (c) => /greenroom-doc-token" content="([^"]+)"/.exec(await (await c.fetch('/s/demo/', { headers: DOC })).text())?.[1];
 const api = (t, tok, body, method = 'POST') => fetch(t.base + '/s/demo/_fs/db', { method, headers: { 'content-type': 'application/json', ...(tok && { 'x-fs-doc-token': tok }) }, body: JSON.stringify(body) });
 
 test('sqlite: MCP creates the database; the browser API obeys the per-table policy and the doc token', async (x) => {

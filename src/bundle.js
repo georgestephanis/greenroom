@@ -9,8 +9,8 @@ import { tx } from './db.js';
 import { withZip, ZipWriter } from './zip.js';
 import { cleanPath, contentType, hmac, newId, now, safeEqual, SLUG_RE } from './util.js';
 
-export const FORMAT = 'freespace-bundle/1';
-export const GENERATOR = { name: 'freespace', version: '0.4.0' };
+export const FORMAT = 'greenroom-bundle/1';
+export const GENERATOR = { name: 'greenroom', version: '0.4.0' };
 const PRIVACY = ['team', 'link', 'public'];
 const MAX_BUNDLE_ENTRIES = 65_534; // the zip end record counts entries in 16 bits and 0xffff means zip64, which is refused
 const MAX_BUNDLE_CD = 64 * 1024 * 1024;
@@ -27,7 +27,7 @@ const gitSafe = (p) => !p.split('/').some((x) => x.toLowerCase() === '.git');
 const person = (name, id, ts) => {
   const n = String(name || '').replace(/[<>\n\r]/g, '').trim() || 'Unknown';
   const e = String(id || '').replace(/[^\w.-]/g, '') || 'unknown';
-  return `${n} <${e}@freespace.invalid> ${ts} +0000`;
+  return `${n} <${e}@greenroom.invalid> ${ts} +0000`;
 };
 
 async function* chunks(store, sha, size) {
@@ -62,7 +62,7 @@ async function* fastImport(store, space) {
       ops.push(`M 100644 :${marks.get(f.sha256)} ${gitPath(p)}\n`);
     }
     const ts = Math.floor(Date.parse(v.created_at) / 1000);
-    const msg = Buffer.from(`${v.message || `Version ${v.number}`}\n\nFreespace-Version: ${v.id} (v${v.number})\nFreespace-Source: ${v.source || 'unknown'}\n${v.parent_version_id ? `Freespace-Parent: ${v.parent_version_id}\n` : ''}`);
+    const msg = Buffer.from(`${v.message || `Version ${v.number}`}\n\nGreenroom-Version: ${v.id} (v${v.number})\nGreenroom-Source: ${v.source || 'unknown'}\n${v.parent_version_id ? `Greenroom-Parent: ${v.parent_version_id}\n` : ''}`);
     ++mark;
     last = mark;
     prev = cur;
@@ -103,7 +103,7 @@ async function* activityJson(store, space) {
   yield '\n]\n';
 }
 
-/** Writes `{slug}.freespace.zip` (or the history variant) to `outFile`. */
+/** Writes `{slug}.greenroom.zip` (or the history variant) to `outFile`. */
 export async function exportBundle(store, space, { history = false, outFile, exportedAt = now() }) {
   const { cas, db } = store;
   const live = space.live_version_id ? db.prepare('SELECT * FROM versions WHERE id = ?').get(space.live_version_id) : null;

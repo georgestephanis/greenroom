@@ -1,12 +1,12 @@
-# freespace bundle format, version 1
+# greenroom bundle format, version 1
 
-A bundle is a plain zip. It is the contract between freespace instances today and between freespace
+A bundle is a plain zip. It is the contract between greenroom instances today and between greenroom
 and homefast later, so it stays small, versioned and boring. The committed fixtures in
 `test/fixtures/bundles/` (regenerate with `node scripts/make-fixtures.js`) are the reference examples.
 
 ## Two kinds
 
-**`{slug}.freespace.zip`** (`kind: "current"`): the live version only.
+**`{slug}.greenroom.zip`** (`kind: "current"`): the live version only.
 
 ```
 space.json
@@ -14,7 +14,7 @@ site/…                  the live version's files, browsable as-is
 plugins/{name}/…        each plugin's current data, plus `settings.json` (see Plugins)
 ```
 
-**`{slug}.freespace-history.zip`** (`kind: "history"`): the above, plus
+**`{slug}.greenroom-history.zip`** (`kind: "history"`): the above, plus
 
 ```
 history/versions.json   every version, oldest first
@@ -28,10 +28,10 @@ activity.json           the space's audit trail
 
 ```json
 {
-  "format": "freespace-bundle/1",
+  "format": "greenroom-bundle/1",
   "kind": "current | history",
   "exported_at": "2025-03-03T10:00:00.000Z",
-  "generator": { "name": "freespace", "version": "0.4.0" },
+  "generator": { "name": "greenroom", "version": "0.4.0" },
   "space": {
     "id": "spc_…", "slug": "acme-site", "name": "Acme site",
     "privacy": "team | link | public", "noindex": true, "owner_id": "usr_…",
@@ -67,10 +67,10 @@ Timestamps are ISO-8601 UTC. IDs use homefast's prefixes (`spc_`, `ver_`, `usr_`
 
 A `git fast-import` stream on `refs/heads/main`: one commit per version in version order, with the
 version's author, message and timestamp (agents show as "Claude (via X)"), trailers
-`Freespace-Version`, `Freespace-Source` and (when it has one) `Freespace-Parent`, and a placeholder email
-(`…@freespace.invalid`). The branch is always linear: each commit follows the previous version and carries the
+`Greenroom-Version`, `Greenroom-Source` and (when it has one) `Greenroom-Parent`, and a placeholder email
+(`…@greenroom.invalid`). The branch is always linear: each commit follows the previous version and carries the
 files as a delta from it, so a version published on an older base (or a restart with no parent) still shows up in
-`git log`. The real parent is only in the `Freespace-Parent` trailer. The importer ignores this file; it exists so a space's history can be read with git:
+`git log`. The real parent is only in the `Greenroom-Parent` trailer. The importer ignores this file; it exists so a space's history can be read with git:
 
 ```bash
 git init site && cd site && git fast-import < history.fi && git checkout -f main
@@ -81,7 +81,7 @@ git init site && cd site && git fast-import < history.fi && git checkout -f main
 `[{ actor_kind, actor_id, action, resource_type, resource_id, detail, created_at }]`, oldest first. `detail` is
 the same small JSON the instance logged; the importer adds `imported: true` to it.
 
-## Importing (freespace)
+## Importing (greenroom)
 
 `POST /api/import[?slug=…&replace=1]` with the zip as the body, or the Import card on the Spaces page. Signed-in
 people only; agent credentials cannot import or replace.
@@ -90,7 +90,7 @@ people only; agent credentials cannot import or replace.
   declared in the zip and in the manifest must be true; every blob is re-hashed while it is stored; a version's
   parent must exist; limits (`maxFileBytes`, `maxSpaceBytes`, entry count, JSON size) apply as for uploads.
   Nothing is written to the database until everything has checked out, and then in one transaction.
-- **Limits.** An import is capped at `FREESPACE_MAX_IMPORT_BYTES` (default three times `maxSpaceBytes` plus 64 MB: a history bundle carries each blob in `site/`, `history/blobs/` and `history.fi`), separate from the upload cap, so a space's own export always fits. One import runs at a time (503 + `Retry-After` otherwise). A bundle holds at most 65,534 entries and no zip64.
+- **Limits.** An import is capped at `GREENROOM_MAX_IMPORT_BYTES` (default three times `maxSpaceBytes` plus 64 MB: a history bundle carries each blob in `site/`, `history/blobs/` and `history.fi`), separate from the upload cap, so a space's own export always fits. One import runs at a time (503 + `Retry-After` otherwise). A bundle holds at most 65,534 entries and no zip64.
 - **Never overwrites.** If the slug exists the import is refused (409). With `replace=1` the existing space's
   versions are replaced by the bundle's; its links, privacy and activity stay, and the import is logged. A taken slug is refused before any blob is stored.
 - **IDs are preserved**, or remapped when they collide with a row already on this instance (a warning says so).
