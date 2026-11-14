@@ -233,7 +233,15 @@ export function createApp(overrides = {}) {
       // CSP form-action must allow the post-consent redirect to the client, or browsers block it.
       const ru = new URL(r.redirect_uri);
       res.setHeader('Content-Security-Policy', DASHBOARD_CSP.replace("form-action 'self'", `form-action 'self' ${/^https?:$/.test(ru.protocol) ? ru.origin : ru.protocol}`));
-      return html(res, 200, ui.consentPage(cred, r.client, q, r.requested, store.listSpaces()));
+      // Approval replaces the grant's scope, so start from what this member already granted this client.
+      const prev = db.prepare("SELECT scope_json FROM api_keys WHERE kind = 'oauth' AND user_id = ? AND client_id = ? AND revoked_at IS NULL").get(cred.userId, r.client.client_id);
+      const was = prev ? JSON.parse(prev.scope_json) : { spaces: [], create: false, perms: [] };
+      const pick = {
+        spaces: [...new Set([...(was.spaces === '*' ? [] : was.spaces), ...r.requested.spaces])],
+        create: was.create || r.requested.create,
+        perms: [...new Set([...was.perms, ...r.requested.perms])],
+      };
+      return html(res, 200, ui.consentPage(cred, r.client, q, pick, store.listSpaces()));
     }
     if (p === '/access') {
       const rows = db.prepare(`SELECT k.*, u.display_name AS granter FROM api_keys k JOIN users u ON u.id = k.user_id WHERE k.revoked_at IS NULL ${cred.user.role === 'admin' ? '' : 'AND k.user_id = ?'} ORDER BY k.created_at DESC`)

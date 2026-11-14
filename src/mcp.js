@@ -28,7 +28,13 @@ export const TOOLS = [
   { name: 'rollback', description: 'Make an earlier version live again (as a new version).', inputSchema: obj({ ...slugArg, version: { type: 'integer' } }) },
 ];
 
-const insufficient = (scope) => Object.assign(httpErr(403, `This credential needs scope: ${scope}`), { insufficientScope: scope });
+// The challenge asks for what the grant already has plus what is missing, so a client that steps up
+// with exactly this scope widens the grant instead of replacing it with the one missing piece.
+function insufficient(cred, need) {
+  const sc = cred.scope;
+  const have = [...(sc.spaces === '*' ? [] : sc.spaces.map((s) => `space:${s}`)), ...(sc.create ? ['spaces:create'] : []), ...sc.perms];
+  return Object.assign(httpErr(403, `This credential needs scope: ${need.join(' ')}`), { insufficientScope: [...new Set([...have, ...need])].join(' ') });
+}
 
 export function createMcp({ store, db }) {
   const inScope = (cred, slug) => cred.scope.spaces === '*' || cred.scope.spaces.includes(slug);
@@ -38,7 +44,7 @@ export function createMcp({ store, db }) {
     const need = [];
     if (!inScope(cred, s.slug)) need.push(`space:${s.slug}`);
     if (perm && !can({ scope: { ...cred.scope, spaces: '*' } }, perm)) need.push(perm);
-    if (need.length) throw insufficient(need.join(' '));
+    if (need.length) throw insufficient(cred, need);
     return s;
   }
   const pubSpace = (s) => ({ slug: s.slug, name: s.name, privacy: s.privacy, url: `/s/${s.slug}/`, live_version: s.live_number ?? null });
@@ -51,7 +57,7 @@ export function createMcp({ store, db }) {
       return { space: pubSpace(store.listSpaces([s.slug])[0] || s) };
     },
     create_space: (cred, a) => {
-      if (!can(cred, 'create')) throw insufficient('spaces:create');
+      if (!can(cred, 'create')) throw insufficient(cred, ['spaces:create']);
       // The new space joins this grant's scope (same row for OAuth and pasted tokens). Re-read the row in
       // one transaction so a concurrent create, re-consent or revocation is never overwritten.
       db.exec('BEGIN IMMEDIATE');

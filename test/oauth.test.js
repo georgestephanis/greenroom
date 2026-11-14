@@ -228,9 +228,9 @@ test('insufficient_scope names what to ask for, and step-up widens the same gran
     const a = await connect(t, ada, { spaces: ['alpha'], perms: ['read'] });
     const pub = await call(t, a.access_token, 'publish', { slug: 'alpha', files: [{ path: 'index.html', content: 'hi' }] });
     assert.equal(pub.status, 403);
-    assert.match(pub.www, /error="insufficient_scope", scope="publish"/);
+    assert.match(pub.www, /error="insufficient_scope", scope="space:alpha read publish"/);
     const other = await call(t, a.access_token, 'get_space', { slug: 'beta' });
-    assert.match(other.www, /scope="space:beta"/);
+    assert.match(other.www, /scope="space:alpha read space:beta"/);
     assert.deepEqual((await call(t, a.access_token, 'list_spaces')).body.result.structuredContent.spaces.map((s) => s.slug), ['alpha']);
 
     await connect(t, ada, { spaces: ['alpha', 'beta'], perms: ['read', 'publish'], scope: 'space:alpha space:beta read publish' });
@@ -290,5 +290,25 @@ test('MCP resolves the grant after the body arrives; concurrent create_space cal
     });
     assert.equal(status, 401);
     assert.equal(t.store.space('late'), undefined);
+  } finally { t.close(); }
+});
+
+test('step-up with the server hint keeps what the grant had; consent pre-ticks the existing grant', async () => {
+  const { t, ada } = await world();
+  try {
+    const a = await connect(t, ada, { spaces: ['alpha'], perms: ['read'] });
+    const ticked = async (scope) => {
+      const page = await (await ada.fetch(authzQuery({ code_challenge: pkce().challenge, scope }))).text();
+      return [...page.matchAll(/name="(spaces|perms|create)" value="([^"]+)" checked/g)].map((m) => `${m[1]}=${m[2]}`).sort();
+    };
+    // A client that asks only for the missing piece still sees the existing grant ticked.
+    assert.deepEqual(await ticked('publish'), ['perms=publish', 'perms=read', 'spaces=alpha']);
+
+    const hint = /scope="([^"]+)"/.exec((await call(t, a.access_token, 'publish', { slug: 'beta', files: [{ path: 'index.html', content: 'hi' }] })).www)[1];
+    const boxes = await ticked(hint);
+    const pick = (k) => boxes.filter((b) => b.startsWith(k + '=')).map((b) => b.split('=')[1]);
+    await connect(t, ada, { spaces: pick('spaces'), perms: pick('perms'), scope: hint });
+    assert.equal((await call(t, a.access_token, 'publish', { slug: 'beta', files: [{ path: 'index.html', content: 'hi' }] })).status, 200);
+    assert.equal((await call(t, a.access_token, 'get_space', { slug: 'alpha' })).status, 200, 'alpha is still in scope');
   } finally { t.close(); }
 });
