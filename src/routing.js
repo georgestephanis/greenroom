@@ -50,6 +50,12 @@ export function compilePattern(pattern) {
     );
   }
 
+  // Each :param must be a whole path segment, so every ([^/]+) is fenced by literal slashes and
+  // matching stays linear. Adjacent params (`:a:b`, `:a*`) backtrack polynomially (ReDoS).
+  const segs = pattern.split('/').filter((g) => g.includes(':'));
+  if (segs.some((g) => !/^:[a-zA-Z0-9_]+$/.test(g))) throw new Error(`Pattern '${pattern}': each placeholder must be a whole path segment, like /blog/:slug`);
+  if (segs.length > 8) throw new Error(`Pattern '${pattern}' has more than 8 placeholders`);
+
   const keys = [];
 
   // Escape regex special chars except * and :name
