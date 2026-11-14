@@ -134,7 +134,9 @@ export class Auth {
   }
 
   async login(email, password, meta = {}) {
-    const u = this.db.prepare('SELECT * FROM users WHERE username = ?').get(normEmail(email) ?? '');
+    // Rows from before M6 were stored lowercased but otherwise as typed (e.g. a Unicode domain); fall back to that form.
+    const find = (x) => this.db.prepare('SELECT * FROM users WHERE username = ?').get(x);
+    const u = find(normEmail(email) ?? '') ?? find(String(email ?? '').trim().toLowerCase());
     const ok = await verifyPassword(String(password || ''), u ? u.password_hash : DUMMY);
     if (!u || !ok || u.disabled_at) throw httpErr(401, 'Invalid email or password');
     // Only after the password: the caller emails a confirmation link to the address on file.
