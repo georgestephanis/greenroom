@@ -11,7 +11,7 @@ import { cleanPath, contentType, hmac, newId, now, safeEqual, SLUG_RE } from './
 export const FORMAT = 'freespace-bundle/1';
 export const GENERATOR = { name: 'freespace', version: '0.4.0' };
 const PRIVACY = ['team', 'link', 'public'];
-const MAX_BUNDLE_ENTRIES = 100_000;
+const MAX_BUNDLE_ENTRIES = 65_534; // the zip end record counts entries in 16 bits and 0xffff means zip64, which is refused
 const MAX_BUNDLE_CD = 64 * 1024 * 1024;
 
 // ---------------------------------------------------------------- export
@@ -116,7 +116,7 @@ export async function exportBundle(store, space, { history = false, outFile, exp
         owner_id: space.owner_id, created_at: space.created_at, updated_at: space.updated_at,
         live_version_id: space.live_version_id, plugins: JSON.parse(space.plugins_json || '[]'),
       },
-      live_version: live && { id: live.id, number: live.number, author: live.author_name, source: live.source, message: live.message, created_at: live.created_at },
+      live_version: live && { id: live.id, number: live.number, author: live.author_name, source: live.source, message: live.message, created_at: live.created_at, files: liveFiles.map((f) => ({ path: f.path, type: f.content_type })) },
     };
     await zip.add('space.json', JSON.stringify(doc, null, 2) + '\n');
     for (const f of liveFiles) {
@@ -141,13 +141,14 @@ export async function exportBundle(store, space, { history = false, outFile, exp
 }
 
 // Short-lived signed download URLs (MCP export_space). Stateless: nothing to expire or clean up.
-const sigOf = (secret, slug, kind, exp) => hmac(secret, `export|${slug}|${kind}|${exp}`);
-export function signExport(secret, slug, history, ttlSec = 600) {
+// The signature binds the space id and the credential that asked; the server then re-checks both are still live.
+const sigOf = (secret, spaceId, credId, kind, exp) => hmac(secret, `export|${spaceId}|${credId}|${kind}|${exp}`);
+export function signExport(secret, spaceId, credId, history, ttlSec = 600) {
   const kind = history ? 'history' : 'current', exp = Math.floor(Date.now() / 1000) + ttlSec;
-  return { path: `/export/${slug}/${kind}?exp=${exp}&sig=${sigOf(secret, slug, kind, exp)}`, expires_at: new Date(exp * 1000).toISOString() };
+  return { path: `/export/${spaceId}/${kind}?c=${encodeURIComponent(credId)}&exp=${exp}&sig=${sigOf(secret, spaceId, credId, kind, exp)}`, expires_at: new Date(exp * 1000).toISOString() };
 }
-export function verifyExport(secret, slug, kind, exp, sig) {
-  return /^\d+$/.test(String(exp)) && Number(exp) > Date.now() / 1000 && ['current', 'history'].includes(kind) && safeEqual(sig ?? '', sigOf(secret, slug, kind, exp));
+export function verifyExport(secret, spaceId, credId, kind, exp, sig) {
+  return typeof credId === 'string' && /^\d+$/.test(String(exp)) && Number(exp) > Date.now() / 1000 && ['current', 'history'].includes(kind) && safeEqual(sig ?? '', sigOf(secret, spaceId, credId, kind, exp));
 }
 
 // ---------------------------------------------------------------- import (untrusted input)
@@ -214,6 +215,10 @@ export async function importBundle(store, cred, file, { slug: wantSlug, replace 
     if (!name) throw bad('space.name is empty');
     const slug = wantSlug ?? str(sp.slug, 'space.slug', 62);
     if (!SLUG_RE.test(slug)) throw httpErr(400, 'slug must be lowercase letters, digits and dashes');
+    // Fail before any blob is stored; the transaction below checks again.
+    const taken = db.prepare('SELECT 1 FROM spaces WHERE slug = ?').get(slug);
+    if (taken && !replace) throw httpErr(409, `The slug "${slug}" is taken. Choose another, or ask to replace it.`);
+    if (taken && cred?.type !== 'session') throw httpErr(403, 'Replacing a space needs a signed-in person');
     const privacy = sp.privacy === undefined ? 'team' : sp.privacy;
     if (!PRIVACY.includes(privacy)) throw bad('space.privacy must be team, link or public');
     const bundleSpaceId = id(sp.id, 'spc', 'space.id');
@@ -247,24 +252,29 @@ export async function importBundle(store, cred, file, { slug: wantSlug, replace 
       const arr = await readJson(open, byName.get('history/versions.json'), 'history/versions.json', config.maxJsonBytes);
       if (!Array.isArray(arr) || !arr.length) throw bad('history/versions.json must be a non-empty array');
       versions = arr.map((v) => cleanVersion(v, config));
+      const declared = new Map(); // sha -> the one size every version must agree on (linear, not versions x blobs)
       for (const v of versions) for (const f of v.files) {
         const n = `history/blobs/${f.sha256.slice(0, 2)}/${f.sha256}`;
         if (!byName.has(n)) throw bad(`blob ${f.sha256} (${f.path}) is not in the bundle`);
+        if (declared.has(f.sha256) && declared.get(f.sha256) !== f.size) throw bad(`${f.path} in v${v.number} declares a size that disagrees with another version`);
+        declared.set(f.sha256, f.size);
         need.set(f.sha256, n);
       }
       declaredTotal(need.values());
       for (const [sha, n] of need) {
         const s = await storeEntry(n);
         if (s.sha256 !== sha) throw bad(`${n} does not match its hash`);
-        for (const v of versions) for (const f of v.files) if (f.sha256 === sha && f.size !== s.size) throw bad(`${f.path} in v${v.number} declares the wrong size`);
+        if (s.size !== declared.get(sha)) throw bad(`${n} is not the size versions.json declares`);
       }
     } else {
       const site = [...byName.keys()].filter((n) => n.startsWith('site/'));
       if (!site.length) throw bad('the bundle has no site/ files');
       declaredTotal(site);
       const files = [], entries = new Map();
+      // Content types the exporter recorded are kept when they look like a MIME type; otherwise derived from the path.
+      const kept = new Map(Array.isArray(doc.live_version?.files) ? doc.live_version.files.filter((f) => isObj(f) && typeof f.type === 'string' && f.type.length <= 100 && TYPE_RE.test(f.type)).map((f) => [f.path, f.type]) : []);
       for (const n of site) {
-        const s = await storeEntry(n), path = n.slice(5), type = contentType(path);
+        const s = await storeEntry(n), path = n.slice(5), type = kept.get(path) ?? contentType(path);
         files.push({ path, sha256: s.sha256, size: s.size, type });
         entries.set(path, { path, sha256: s.sha256, size: s.size, content_type: type });
         need.set(s.sha256, n);
@@ -407,14 +417,14 @@ function cleanVersion(v, config) {
 
 function cleanActivity(a) {
   if (!isObj(a)) throw bad('an activity entry is not an object');
-  const detail = JSON.stringify(isObj(a.detail) ? a.detail : {});
+  const detail = JSON.stringify({ ...(isObj(a.detail) ? a.detail : {}), imported: true });
   return {
     actor_kind: str(a.actor_kind, 'activity actor_kind', 32, { min: 1 }),
     actor_id: str(a.actor_id, 'activity actor_id', 100, { nullable: true }),
     action: str(a.action, 'activity action', 100, { min: 1 }),
     resource_type: str(a.resource_type, 'activity resource_type', 100, { nullable: true }),
     resource_id: str(a.resource_id, 'activity resource_id', 100, { nullable: true }),
-    detail: detail.length <= 8192 ? detail : '{"truncated":true}',
+    detail: detail.length <= 8192 ? detail : '{"truncated":true,"imported":true}',
     created_at: stamp(a.created_at, 'activity created_at'),
   };
 }

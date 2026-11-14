@@ -228,7 +228,7 @@ test('MCP export_space returns a signed link that works once signed and not othe
   const ok = await call(minted.token, { slug: 'alpha', history: true });
   assert.equal(ok.status, 200);
   const u = new URL(ok.body.result.structuredContent.url);
-  assert.match(u.pathname, /^\/export\/alpha\/history$/);
+  assert.match(u.pathname, /^\/export\/spc_[\w-]+\/history$/);
   const got = await fetch(t.base + u.pathname + u.search);
   assert.equal(got.status, 200);
   assert.equal(got.headers.get('content-type'), 'application/zip');
@@ -238,8 +238,14 @@ test('MCP export_space returns a signed link that works once signed and not othe
   assert.equal((await fetch(t.base + tampered.pathname + tampered.search)).status, 404);
   const swapped = await fetch(t.base + u.pathname.replace('history', 'current') + u.search);
   assert.equal(swapped.status, 404, 'a link for one export cannot fetch the other');
-  const old = signExport(t.config.secret, 'alpha', false, -5);
+  const sid = t.store.space('alpha').id;
+  const old = signExport(t.config.secret, sid, u.searchParams.get('c'), false, -5);
   assert.equal((await fetch(t.base + old.path)).status, 404, 'expired');
+  const other = new URL(u); other.searchParams.set('c', 'key_other');
+  assert.equal((await fetch(t.base + other.pathname + other.search)).status, 404, 'bound to the credential that asked');
+  // The link dies with its credential, and with its space.
+  t.db.prepare('UPDATE api_keys SET revoked_at = ? WHERE id = ?').run('2020-01-01T00:00:00.000Z', u.searchParams.get('c'));
+  assert.equal((await fetch(t.base + u.pathname + u.search)).status, 404, 'revoked credential');
 });
 
 test('export_space needs the export scope', async (x) => {
@@ -316,4 +322,45 @@ test('importing needs a session and a CSRF token', async (x) => {
   assert.equal((await fetch(t.base + '/api/import', { method: 'POST', body, headers: { 'content-type': 'application/zip' } })).status, 403);
   assert.equal((await admin.fetch('/api/import', { method: 'POST', body, headers: { 'content-type': 'application/zip' } })).status, 403, 'no CSRF header');
   assert.equal(t.db.prepare('SELECT COUNT(*) c FROM spaces').get().c, 0);
+});
+
+test('a space export bigger than the upload cap still imports (import has its own cap)', async (x) => {
+  const { admin } = await seeded(x);
+  const file = await download(x, admin, '/spaces/alpha/export?history=1');
+  const body = fs.readFileSync(file);
+  const { t: small, admin: a2 } = await world(x, { maxUploadBytes: body.length - 1 });
+  assert.equal((await imp(a2, body)).status, 201);
+  assert.equal(small.store.space('alpha').slug, 'alpha');
+  const { admin: a3 } = await world(x, { maxUploadBytes: body.length - 1, maxImportBytes: body.length - 1 });
+  assert.equal((await imp(a3, body)).status, 413, 'the import cap still applies');
+});
+
+test('a taken slug is refused before any blob is stored', async (x) => {
+  const { t, admin } = await seeded(x);
+  const count = (d) => fs.readdirSync(d, { withFileTypes: true }).reduce((n, e) => n + (e.isDirectory() ? count(path.join(d, e.name)) : 1), 0);
+  const n = count(t.store.cas.baseDir);
+  const bundle = toZip(historyEntries(({ doc, blobs }) => { doc.space.slug = 'alpha'; blobs.index = Buffer.from('never stored'); }));
+  assert.equal((await imp(admin, bundle)).status, 409);
+  assert.equal(count(t.store.cas.baseDir), n);
+});
+
+test('a failed replace leaves the old versions and live pointer untouched', async (x) => {
+  const { t, admin } = await seeded(x);
+  const sp = t.store.space('alpha');
+  const before = JSON.stringify(snapshot(t, 'alpha'));
+  const bad = toZip(historyEntries(({ doc, entries }) => { doc.space.slug = 'alpha'; entries[2].data = 'tampered blob'; })); // a blob that no longer matches its hash, after earlier blobs were stored
+  const r = await imp(admin, bad, '?replace=1');
+  assert.ok([400, 413].includes(r.status), String(r.status));
+  assert.equal(JSON.stringify(snapshot(t, 'alpha')), before);
+  assert.equal(t.store.space('alpha').live_version_id, sp.live_version_id);
+});
+
+test('filenames that look like Finder litter survive a bundle round trip; imported activity is marked', async (x) => {
+  const { admin } = await world(x);
+  await admin.post('/api/spaces', { name: 'D', slug: 'd' });
+  await admin.post('/api/spaces/d/versions', { files: [{ path: 'index.html', content: 'x' }, { path: 'foo.DS_Store', content: 'keep me' }] });
+  const { t, admin: a2 } = await world(x);
+  assert.equal((await imp(a2, fs.readFileSync(await download(x, admin, '/spaces/d/export?history=1')))).status, 201);
+  assert.deepEqual(t.store.manifest(t.store.space('d').live_version_id).map((f) => f.path).sort(), ['foo.DS_Store', 'index.html']);
+  assert.ok(t.db.prepare('SELECT detail_json FROM activity_log WHERE space_id = ?').all(t.store.space('d').id).some((a) => JSON.parse(a.detail_json).imported));
 });

@@ -37,11 +37,12 @@ activity.json           the space's audit trail
     "privacy": "team | link | public", "noindex": true, "owner_id": "usr_…",
     "created_at": "…", "updated_at": "…", "live_version_id": "ver_…", "plugins": []
   },
-  "live_version": { "id": "ver_…", "number": 7, "author": "Claude (via Ada)", "source": "mcp", "message": "…", "created_at": "…" }
+  "live_version": { "id": "ver_…", "number": 7, "author": "Claude (via Ada)", "source": "mcp", "message": "…", "created_at": "…",
+    "files": [{ "path": "index.html", "type": "text/html; charset=utf-8" }] }
 }
 ```
 
-`live_version` is present in both kinds. A reader must refuse any `format` it does not know.
+`live_version` is present in both kinds; its `files` list carries each live file's content type (a current bundle has no other manifest, so the importer keeps these when they look like a MIME type). A reader must refuse any `format` it does not know.
 Timestamps are ISO-8601 UTC. IDs use homefast's prefixes (`spc_`, `ver_`, `usr_`, `key_`).
 
 ## `history/versions.json`
@@ -78,7 +79,7 @@ git init site && cd site && git fast-import < history.fi && git checkout -f main
 ## `activity.json`
 
 `[{ actor_kind, actor_id, action, resource_type, resource_id, detail, created_at }]`, oldest first. `detail` is
-the same small JSON the instance logged.
+the same small JSON the instance logged; the importer adds `imported: true` to it.
 
 ## Importing (freespace)
 
@@ -89,8 +90,9 @@ people only; agent credentials cannot import or replace.
   declared in the zip and in the manifest must be true; every blob is re-hashed while it is stored; a version's
   parent must exist; limits (`maxFileBytes`, `maxSpaceBytes`, entry count, JSON size) apply as for uploads.
   Nothing is written to the database until everything has checked out, and then in one transaction.
+- **Limits.** An import is capped at `FREESPACE_MAX_IMPORT_BYTES` (default three times `maxSpaceBytes` plus 64 MB: a history bundle carries each blob in `site/`, `history/blobs/` and `history.fi`), separate from the upload cap, so a space's own export always fits. One import runs at a time (503 + `Retry-After` otherwise). A bundle holds at most 65,534 entries and no zip64.
 - **Never overwrites.** If the slug exists the import is refused (409). With `replace=1` the existing space's
-  versions are replaced by the bundle's; its links, privacy and activity stay, and the import is logged.
+  versions are replaced by the bundle's; its links, privacy and activity stay, and the import is logged. A taken slug is refused before any blob is stored.
 - **IDs are preserved**, or remapped when they collide with a row already on this instance (a warning says so).
   The importer becomes the owner; `owner_id` and history `author_id` in the bundle are informational.
 - A `current` bundle becomes a single version. Routing is recompiled, never taken from the bundle.

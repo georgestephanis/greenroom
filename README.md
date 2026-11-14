@@ -25,7 +25,7 @@ Open it, create the admin account at `/setup`, then invite your team from the Te
 | `HOST` / `PORT` | `127.0.0.1` / `8080` | |
 | `FREESPACE_PUBLIC_URL` | | used for invite links and as the OAuth issuer; set it in production |
 | `FREESPACE_TRUST_PROXY` | | `1` behind a proxy that sets `X-Forwarded-For`, so login throttling sees real client IPs |
-| `FREESPACE_MAX_UPLOAD_BYTES` | 200 MB | also `..._MAX_FILE_BYTES`, `..._MAX_SPACE_BYTES`, `..._MAX_TOTAL_BYTES` |
+| `FREESPACE_MAX_UPLOAD_BYTES` | 200 MB | also `..._MAX_IMPORT_BYTES` (bundle imports, default 3 × space size + 64 MB), `..._MAX_FILE_BYTES`, `..._MAX_SPACE_BYTES`, `..._MAX_TOTAL_BYTES` |
 
 It idles at well under 100 MB of RAM; `npm test` boots it with a 256 MB heap cap and checks RSS.
 
@@ -58,7 +58,7 @@ Switching a space away from "Anyone with the link" pauses its links. When a pers
 
 ## Agents: MCP and OAuth
 
-The MCP endpoint is `POST /mcp` (Streamable HTTP, JSON responses). Tools: `list_spaces`, `get_space`, `create_space`, `publish`, `read_file`, `list_versions`, `diff_versions`, `rollback`, `create_share_link`, `revoke_share_link` (both need `share`; creating a link switches a team-only space to "Anyone with the link" and says so in a `note`; it fails on a Public space). `export_space` (needs `export`; returns a download link valid for 10 minutes).
+The MCP endpoint is `POST /mcp` (Streamable HTTP, JSON responses). Tools: `list_spaces`, `get_space`, `create_space`, `publish`, `read_file`, `list_versions`, `diff_versions`, `rollback`, `create_share_link`, `revoke_share_link` (both need `share`; creating a link switches a team-only space to "Anyone with the link" and says so in a `note`; it fails on a Public space). `export_space` (needs `export`; returns a download link valid for 10 minutes, bound to that space and that credential, and dead if either is revoked or deleted).
 
 Every way in — dashboard session, OAuth access token, pasted `fsa_` token — resolves to one credential object before any route runs, and every check reads only that.
 

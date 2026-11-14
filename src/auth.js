@@ -185,13 +185,23 @@ export class Auth {
         "SELECT k.* FROM oauth_tokens t JOIN api_keys k ON k.id = t.grant_id WHERE t.token_hash = ? AND t.kind = 'access' AND t.expires_at > ? AND k.revoked_at IS NULL",
       ).get(sha256hex(token), now());
     }
-    if (!row || (row.expires_at && row.expires_at < now())) return null;
+    return row ? this.#fromRow(row, true) : null;
+  }
+
+  /** The live credential behind an api_keys row id (signed export links), else null. Same live checks as a request. */
+  keyCred(id) {
+    const row = this.db.prepare("SELECT * FROM api_keys WHERE id = ? AND revoked_at IS NULL AND kind IN ('agent_token','oauth')").get(String(id));
+    return row ? this.#fromRow(row, false) : null;
+  }
+
+  #fromRow(row, touch) {
+    if (row.expires_at && row.expires_at < now()) return null;
     const granter = this.activeUser(row.user_id); // live constraint: removed member => credential dies
     if (!granter) return null;
     let scope = null;
     try { scope = normaliseScope(JSON.parse(row.scope_json)); } catch { /* fail closed */ }
     if (!scope) return null;
-    this.db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(now(), row.id);
+    if (touch) this.db.prepare('UPDATE api_keys SET last_used_at = ? WHERE id = ?').run(now(), row.id);
     return {
       type: row.kind === 'oauth' ? 'oauth' : 'agent_token', id: row.id, userId: granter.id, user: granter,
       scope, grantedBy: granter.id, expiresAt: row.expires_at, label: row.client_name || row.name, via: 'bearer',

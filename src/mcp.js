@@ -118,7 +118,7 @@ export function createMcp({ store, db }) {
     },
     export_space: (cred, a, origin) => {
       const s = space(cred, a.slug, 'export');
-      const { path, expires_at } = signExport(store.config.secret, s.slug, a.history === true);
+      const { path, expires_at } = signExport(store.config.secret, s.id, cred.id, a.history === true);
       store.log(cred, 'space.export_link', s.id, { history: a.history === true }, { type: 'space', id: s.id });
       return { url: `${origin}${path}`, expires_at };
     },

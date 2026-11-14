@@ -44,7 +44,6 @@ export async function withZip(file, { maxEntries = MAX_ENTRIES, maxCd = MAX_CD }
         const off = cd.readUInt32LE(pos + 42);
         const name = cd.toString('utf8', pos + 46, pos + 46 + nlen);
         pos += 46 + nlen + xlen + clen;
-        if (name.endsWith('/') || name.startsWith('__MACOSX/') || name.endsWith('.DS_Store')) continue;
         if (flags & 1) throw httpErr(400, 'Encrypted archives are not supported');
         if (method !== 0 && method !== 8) throw httpErr(400, `Unsupported compression in ${name}`);
         raw.push({ name, method, csize, usize, off });
@@ -75,7 +74,9 @@ export async function withZip(file, { maxEntries = MAX_ENTRIES, maxCd = MAX_CD }
 
 /** Returns Map(path -> {path, sha256, size, content_type}). */
 export function importZip(file, cas, { maxFileBytes, maxSpaceBytes }) {
-  return withZip(file, {}, async ({ raw, open }) => {
+  return withZip(file, {}, async ({ raw: all, open }) => {
+    // Finder litter is dropped for site uploads only; a bundle is read strictly (see bundle.js).
+    const raw = all.filter((r) => !(r.name.endsWith('/') || r.name.startsWith('__MACOSX/') || r.name.endsWith('/.DS_Store') || r.name === '.DS_Store'));
     // Folders zipped from Finder/`zip -r dir` carry one shared top-level directory; drop it.
     const tops = new Set(raw.map((r) => r.name.split('/')[0]));
     const strip = tops.size === 1 && ![...tops][0].match(/^\.{0,2}$/) && raw.every((r) => r.name.includes('/')) ? [...tops][0] + '/' : '';
@@ -133,7 +134,7 @@ export class ZipWriter {
     await this.#w(lh); await this.#w(nm);
     let crc = 0, usize = 0, csize = 0;
     async function* raw() {
-      for await (const c of Buffer.isBuffer(source) ? [source] : source) {
+      for await (const c of Buffer.isBuffer(source) || typeof source === 'string' ? [source] : source) {
         const b = Buffer.isBuffer(c) ? c : Buffer.from(c);
         crc = zlib.crc32(b, crc); usize += b.length;
         yield b;

@@ -22,6 +22,8 @@ export function loadConfig(env = process.env, overrides = {}) {
     trustProxy: env.FREESPACE_TRUST_PROXY === '1', // take the client IP from X-Forwarded-For (last hop)
     maxUploadBytes: int(env.FREESPACE_MAX_UPLOAD_BYTES, 200 * 1024 * 1024),
     maxFileBytes: int(env.FREESPACE_MAX_FILE_BYTES, 100 * 1024 * 1024),
+    // A history bundle holds each blob up to three times (site/, history/blobs/, history.fi), plus the JSON documents.
+    maxImportBytes: int(env.FREESPACE_MAX_IMPORT_BYTES, 3 * int(env.FREESPACE_MAX_SPACE_BYTES, 2 * 1024 ** 3) + 64 * 1024 * 1024),
     maxJsonBytes: int(env.FREESPACE_MAX_JSON_BYTES, 24 * 1024 * 1024),
     maxSpaceBytes: int(env.FREESPACE_MAX_SPACE_BYTES, 2 * 1024 ** 3),
     maxTotalBytes: int(env.FREESPACE_MAX_TOTAL_BYTES, 20 * 1024 ** 3),

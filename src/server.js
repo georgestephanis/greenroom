@@ -224,12 +224,12 @@ export function createApp(overrides = {}) {
   const pubVersion = (v) => ({ id: v.id, number: v.number, message: v.message, author: v.author_name, source: v.source, files: v.total_files, bytes: v.total_bytes, created_at: v.created_at });
 
   // Raw zip body streamed to a tmp file (capped), never held in memory.
-  async function spool(req) {
+  async function spool(req, cap = config.maxUploadBytes) {
     const tmp = path.join(config.tmpDir, `up-${randomToken(8)}.zip`);
     let n = 0;
     try {
       await pipeline(req, async function* (src) {
-        for await (const c of src) { n += c.length; if (n > config.maxUploadBytes) throw httpErr(413, 'Upload too large'); yield c; }
+        for await (const c of src) { n += c.length; if (n > cap) throw httpErr(413, 'Upload too large'); yield c; }
       }, fs.createWriteStream(tmp));
     } catch (e) { fs.rmSync(tmp, { force: true }); throw e; }
     return tmp;
@@ -250,15 +250,20 @@ export function createApp(overrides = {}) {
   }
 
   // Import a freespace bundle as a new space. A person's act (like deleting or going public), never an agent's.
+  let importing = 0; // one at a time: an import holds a spooled zip and a long transaction
   async function importSpace(req, res, url, cred) {
     requireSession(cred);
     const replace = url.searchParams.get('replace') === '1';
-    const tmp = await spool(req);
+    if (importing >= 1) { res.setHeader('Retry-After', '10'); throw httpErr(503, 'Another import is running; try again shortly'); }
+    importing++;
+    let tmp;
     try {
+      tmp = await spool(req, config.maxImportBytes);
       const r = await importBundle(store, cred, tmp, { slug: url.searchParams.get('slug') || undefined, replace });
       return json(res, 201, { space: pubSpace(r.space), versions: r.versions, warnings: r.warnings, remapped: r.remapped });
     } finally {
-      fs.rm(tmp, { force: true }, () => {});
+      importing--;
+      if (tmp) fs.rm(tmp, { force: true }, () => {});
     }
   }
 
@@ -407,11 +412,14 @@ export function createApp(overrides = {}) {
       if (url.pathname === '/mcp') return await handleMcp(req, res);
       if (['/oauth/token', '/oauth/revoke', '/oauth/register'].includes(url.pathname)) return await oauthEndpoint(req, res, url);
       // Signed download link from the MCP export_space tool: the signature is the credential.
-      const ex = req.method === 'GET' && /^\/export\/([a-z0-9-]+)\/(current|history)$/.exec(url.pathname);
+      const ex = req.method === 'GET' && /^\/export\/(spc_[\w-]+)\/(current|history)$/.exec(url.pathname);
       if (ex) {
-        const space = verifyExport(config.secret, ex[1], ex[2], url.searchParams.get('exp'), url.searchParams.get('sig')) && store.space(ex[1]);
-        if (!space) return json(res, 404, { error: 'This download link is invalid or has expired' });
-        return await sendExport(res, null, space, ex[2] === 'history');
+        // Signed for this space id and credential; both must still be live and the credential must still be allowed to export.
+        const credId = url.searchParams.get('c');
+        const space = verifyExport(config.secret, ex[1], credId, ex[2], url.searchParams.get('exp'), url.searchParams.get('sig')) && store.spaceById(ex[1]);
+        const holder = space && !space.archived_at ? auth.keyCred(credId) : null;
+        if (!holder || !can(holder, 'export', space.slug)) return json(res, 404, { error: 'This download link is invalid or has expired' });
+        return await sendExport(res, holder, space, ex[2] === 'history');
       }
       const cred = auth.resolve(req);
       const write = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
