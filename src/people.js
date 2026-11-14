@@ -60,7 +60,12 @@ export class People {
     const from = normEmail(cleanHeader(b.from));
     if (!from) throw httpErr(400, 'Enter a valid from-address');
     const user = cleanHeader(b.user).trim().slice(0, 200);
-    const pass = b.pass ? this.#seal(String(b.pass)) : user ? this.s.smtp?.pass ?? null : null; // blank keeps the stored one
+    const prev = this.s.smtp;
+    // Blank keeps the stored password, but only for the same server: otherwise a hijacked session could
+    // point the saved credentials at a server it controls.
+    if (!b.pass && user && prev?.pass && (prev.host !== host || prev.port !== port || prev.security !== security || prev.user !== user)) throw httpErr(400, 'Re-enter the password when changing the server or username');
+    const pass = b.pass ? this.#seal(String(b.pass)) : user ? prev?.pass ?? null : null;
+    if (!prev && this.s.reconfirmDays) this.s.reconfirmSince = now(); // re-confirmation comes back on: a fresh N days
     this.s.smtp = { host, port, security, user, from, pass };
     // Links in mail point here: FREESPACE_PUBLIC_URL, else the origin the admin saved these settings from,
     // never the Host header of the request that triggers a mail (a forged Host would steal signup links).
@@ -105,7 +110,8 @@ export class People {
     if (!Number.isInteger(days) || days < 0 || days > 3650) throw httpErr(400, 'Days must be a whole number from 0 (off) to 3650');
     if (days && !this.s.smtp) throw httpErr(400, 'Configure SMTP before turning on re-confirmation');
     // Turning it on starts everyone's clock now, so nobody is locked out the moment it is enabled.
-    if (days && !this.s.reconfirmDays) this.s.reconfirmSince = now();
+    // Lowering N likewise restarts it, so a shorter period never lapses people (or the acting admin) on the spot.
+    if (days && (!this.s.reconfirmDays || days < this.s.reconfirmDays)) this.s.reconfirmSince = now();
     this.s.reconfirmDays = days;
     this.#save();
     this.store.log(cred, 'reconfirm.settings', null, { days });
@@ -128,13 +134,19 @@ export class People {
 
   /**
    * Same answer, same work on the request path, for every well-formed address: allowed, not allowed, or
-   * already registered. Only the mail differs, and it is sent after the response is decided.
+   * already registered. Everything that depends on which (lookup, token, decrypt, send) runs after the
+   * response, so neither timing nor an error can tell them apart.
    */
   requestSignup(email) {
     if (!this.signupOpen()) throw httpErr(404, 'Self-signup is not available');
     const e = normEmail(email);
     if (!e) throw httpErr(400, 'Enter a valid email address');
-    if (this.throttle(`signup:${e}`, 3, 60 * 60e3)) return; // no more mail to that inbox this hour; same answer
+    setImmediate(() => {
+      try { this.#signup(e); } catch (err) { console.error(`freespace: signup mail not sent: ${err.message}`); }
+    });
+  }
+  #signup(e) {
+    if (this.throttle(`signup:${e}`, 3, 60 * 60e3)) return this.store.log(null, 'signup.throttled', null, { email: e }); // ponytail: per-address cap can be used to delay a colleague's signup; logged so an admin can see it
     const allowed = this.s.domains.includes(e.split('@')[1]);
     const existing = this.db.prepare('SELECT id FROM users WHERE username = ?').get(e);
     const outcome = !allowed ? 'not_allowed' : existing ? 'existing' : 'link';
