@@ -338,3 +338,63 @@ test('step-up with the server hint keeps what the grant had; consent pre-ticks t
     assert.equal((await call(t, a.access_token, 'get_space', { slug: 'alpha' })).status, 200, 'alpha is still in scope');
   } finally { t.close(); }
 });
+
+test('consent POST needs the CSRF token and a same-origin fetch', async () => {
+  const { t, ada } = await world();
+  try {
+    const q = { response_type: 'code', client_id: CLIENT, redirect_uri: REDIRECT, state: 'st', code_challenge_method: 'S256', code_challenge: pkce().challenge, scope: 'read' };
+    const pairs = [...Object.entries(q), ['spaces', 'alpha'], ['perms', 'read'], ['decision', 'approve']];
+    assert.equal((await form(ada, '/oauth/authorize', pairs)).status, 403, 'no _csrf');
+    assert.equal((await form(ada, '/oauth/authorize', [['_csrf', ada.csrf], ...pairs], { 'sec-fetch-site': 'cross-site' })).status, 403, 'cross-site');
+    assert.equal(t.db.prepare('SELECT COUNT(*) c FROM oauth_codes').get().c, 0);
+  } finally { t.close(); }
+});
+
+test('a refresh token presented by another client_id fails without spending it', async () => {
+  const { t, ada } = await world();
+  try {
+    const a = await connect(t, ada);
+    const other = await form(client(t.base), '/oauth/token', { grant_type: 'refresh_token', refresh_token: a.refresh_token, client_id: 'https://other.example/c.json' });
+    assert.equal((await other.json()).error, 'invalid_grant');
+    assert.equal((await refresh(t, a.refresh_token)).status, 200);
+  } finally { t.close(); }
+});
+
+test('fsa_ tokens: the owner can revoke one; another non-admin member cannot', async () => {
+  const { t, ada } = await world();
+  try {
+    const mint = async () => {
+      const r = await form(ada, '/api/tokens', [['_csrf', ada.csrf], ['name', 'bot'], ['spaces', 'alpha'], ['perms', 'read']]);
+      const fsa = /value="(fsa_[^"]+)"/.exec(await r.text())[1];
+      return { fsa, id: t.db.prepare("SELECT id FROM api_keys WHERE kind != 'oauth' ORDER BY rowid DESC").get().id };
+    };
+    const inv = (await (await ada.post('/api/invites', {})).json()).invite;
+    const bob = client(t.base);
+    assert.equal((await bob.json('/api/invites/accept', { token: inv.split('/').pop(), name: 'Bob', email: 'bob@example.com', password: 'correct horse battery' })).status, 201);
+    const bobCsrf = t.db.prepare('SELECT s.csrf_token FROM sessions s JOIN users u ON u.id = s.user_id WHERE u.username = ?').get('bob@example.com').csrf_token;
+
+    const one = await mint();
+    assert.equal((await mcp(t, one.fsa, 'ping')).status, 200);
+    assert.equal((await bob.json(`/api/tokens/${one.id}/revoke`, {}, 'POST', { 'x-csrf-token': bobCsrf })).status, 404);
+    assert.equal((await mcp(t, one.fsa, 'ping')).status, 200, "Bob's attempt changed nothing");
+    assert.equal((await ada.post(`/api/tokens/${one.id}/revoke`, {})).status, 200);
+    assert.equal((await mcp(t, one.fsa, 'ping')).status, 401);
+  } finally { t.close(); }
+});
+
+test('read_file: binary comes back as base64; files over 5 MB are refused', async () => {
+  const { t, ada } = await world();
+  try {
+    const { access_token: tok } = await connect(t, ada, { perms: ['read', 'publish'], scope: 'space:alpha read publish' });
+    const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 1, 2, 255]);
+    const big = await t.store.cas.storeBuffer(Buffer.alloc(6 * 1024 * 1024, 'a'));
+    const pub = await call(t, tok, 'publish', { slug: 'alpha', files: [{ path: 'a.png', base64: png.toString('base64') }, { path: 'big.txt', sha256: big.sha256 }] });
+    assert.ok(!pub.body.result.isError, JSON.stringify(pub.body));
+    const img = (await call(t, tok, 'read_file', { slug: 'alpha', path: 'a.png' })).body.result.structuredContent;
+    assert.equal(img.base64, png.toString('base64'));
+    assert.equal(img.content, undefined);
+    const huge = (await call(t, tok, 'read_file', { slug: 'alpha', path: 'big.txt' })).body.result;
+    assert.ok(huge.isError);
+    assert.match(huge.content[0].text, /too large/);
+  } finally { t.close(); }
+});
