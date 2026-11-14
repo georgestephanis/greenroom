@@ -1,0 +1,15 @@
+{
+  "name": "freespace",
+  "version": "0.1.0",
+  "description": "Small self-hosted place for a team to host what its agents make",
+  "type": "module",
+  "license": "AGPL-3.0-or-later",
+  "bin": { "freespace": "bin/freespace.js" },
+  "files": ["bin", "src", "LICENSE", "README.md"],
+  "scripts": {
+    "start": "node bin/freespace.js serve",
+    "test": "node --test \"test/*.test.js\"",
+    "check": "node scripts/check-boundary.js"
+  },
+  "engines": { "node": ">=24" }
+}
