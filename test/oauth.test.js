@@ -2,6 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
+import http from 'node:http';
 import { boot, client, setupAdmin } from './helpers.js';
 import { parseScopeString } from '../src/auth.js';
 import { isPrivateIp, fetchJson } from '../src/ssrf.js';
@@ -266,5 +267,28 @@ test('consent needs a signed-in person; login returns to the full authorize URL'
     assert.equal(r.status, 302);
     const next = new URL(r.headers.get('location'), t.base).searchParams.get('next');
     assert.match(next, /^\/oauth\/authorize\?.*code_challenge=/);
+  } finally { t.close(); }
+});
+
+test('MCP resolves the grant after the body arrives; concurrent create_space calls both join it', async () => {
+  const { t, ada } = await world();
+  try {
+    const { access_token: tok } = await connect(t, ada, { spaces: [], perms: ['read'], create: true, scope: 'spaces:create read' });
+    await Promise.all(['one', 'two', 'three'].map((name) => call(t, tok, 'create_space', { name })));
+    assert.deepEqual(JSON.parse(t.db.prepare("SELECT scope_json FROM api_keys WHERE kind = 'oauth'").get().scope_json).spaces.sort(), ['one', 'three', 'two']);
+
+    // A request whose body is still arriving when the grant is revoked must not run.
+    const body = JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'create_space', arguments: { name: 'late' } } });
+    const status = await new Promise((resolve, reject) => {
+      const req = http.request(t.base + '/mcp', { method: 'POST', headers: { authorization: `Bearer ${tok}`, 'content-type': 'application/json', 'content-length': body.length } }, (res) => { res.resume(); resolve(res.statusCode); });
+      req.on('error', reject);
+      req.write(body.slice(0, 10));
+      setTimeout(async () => {
+        assert.equal((await ada.post(`/api/tokens/${t.db.prepare("SELECT id FROM api_keys WHERE kind = 'oauth'").get().id}/revoke`, {})).status, 200);
+        req.end(body.slice(10));
+      }, 50);
+    });
+    assert.equal(status, 401);
+    assert.equal(t.store.space('late'), undefined);
   } finally { t.close(); }
 });

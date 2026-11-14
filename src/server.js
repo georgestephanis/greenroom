@@ -291,13 +291,14 @@ export function createApp(overrides = {}) {
   async function handleMcp(req, res) {
     const challenge = (extra = '') => `Bearer resource_metadata="${oauth.issuer(req)}/.well-known/oauth-protected-resource/mcp"${extra}`;
     if (req.method !== 'POST') { res.setHeader('Allow', 'POST'); return json(res, 405, { error: 'POST only (no SSE stream)' }); }
-    const cred = auth.resolve({ headers: { authorization: req.headers.authorization } });
-    if (!cred) {
-      res.setHeader('WWW-Authenticate', challenge());
-      return json(res, 401, { error: 'Authentication required' });
-    }
+    const resolve = () => auth.resolve({ headers: { authorization: req.headers.authorization } });
+    const unauthorized = () => { res.setHeader('WWW-Authenticate', challenge()); return json(res, 401, { error: 'Authentication required' }); };
+    if (!resolve()) return unauthorized(); // cheap refusal before reading a body
     let msg;
     try { msg = JSON.parse((await readBody(req, config.maxJsonBytes)).toString()); } catch (e) { if (e.status) throw e; return json(res, 400, { jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }); }
+    // Resolve again now the body is in: a grant revoked or re-consented while it trickled in must win.
+    const cred = resolve();
+    if (!cred) return unauthorized();
     const r = await mcp(cred, msg);
     if (r.insufficientScope) res.setHeader('WWW-Authenticate', challenge(`, error="insufficient_scope", scope="${r.insufficientScope}"`));
     if (!r.body) { res.statusCode = r.status; return res.end(); }

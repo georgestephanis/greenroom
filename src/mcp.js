@@ -52,12 +52,18 @@ export function createMcp({ store, db }) {
     },
     create_space: (cred, a) => {
       if (!can(cred, 'create')) throw insufficient('spaces:create');
-      const s = store.createSpace(cred, { name: a.name, slug: a.slug });
-      if (cred.scope.spaces !== '*') { // the new space joins this grant's scope (same row for OAuth and pasted tokens)
-        const sc = { ...cred.scope, spaces: [...cred.scope.spaces, s.slug] };
-        db.prepare('UPDATE api_keys SET scope_json = ? WHERE id = ?').run(JSON.stringify(sc), cred.id);
-      }
-      return { space: pubSpace(s) };
+      // The new space joins this grant's scope (same row for OAuth and pasted tokens). Re-read the row in
+      // one transaction so a concurrent create, re-consent or revocation is never overwritten.
+      db.exec('BEGIN IMMEDIATE');
+      try {
+        const row = db.prepare('SELECT scope_json FROM api_keys WHERE id = ? AND revoked_at IS NULL').get(cred.id);
+        if (!row) throw httpErr(401, 'This credential has been revoked');
+        const s = store.createSpace(cred, { name: a.name, slug: a.slug });
+        const sc = JSON.parse(row.scope_json);
+        if (sc.spaces !== '*') db.prepare('UPDATE api_keys SET scope_json = ? WHERE id = ?').run(JSON.stringify({ ...sc, spaces: [...sc.spaces, s.slug] }), cred.id);
+        db.exec('COMMIT');
+        return { space: pubSpace(s) };
+      } catch (e) { db.exec('ROLLBACK'); throw e; }
     },
     publish: async (cred, a) => {
       const s = space(cred, a.slug, 'publish');
