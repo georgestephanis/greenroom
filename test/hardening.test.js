@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CAS } from '../src/cas.js';
+import { hashPassword, verifyPassword } from '../src/auth.js';
 import { importZip } from '../src/zip.js';
 import { makeZip } from './zipbuilder.js';
 import { boot, client, setupAdmin } from './helpers.js';
@@ -88,4 +89,24 @@ test('zip import caps the inflated total at maxSpaceBytes', async () => {
   fs.writeFileSync(zip, makeZip([{ name: 'a', data: 'x'.repeat(800), deflate: true }, { name: 'b', data: 'y'.repeat(800), deflate: true }]));
   await assert.rejects(importZip(zip, cas, { maxFileBytes: 1000, maxSpaceBytes: 1000 }), { status: 413 });
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('zip import stores an empty file', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-zip-'));
+  const cas = new CAS(path.join(dir, 'b'), path.join(dir, 't'));
+  const zip = path.join(dir, 'a.zip');
+  fs.writeFileSync(zip, makeZip([{ name: 'empty.txt', data: '' }, { name: 'index.html', data: 'hi' }]));
+  const out = await importZip(zip, cas, { maxFileBytes: 1000, maxSpaceBytes: 1000 });
+  assert.equal(out.get('empty.txt').size, 0);
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('PHC hashes are written unpadded; padded ones still verify', async () => {
+  const phc = await hashPassword('long enough password');
+  const parts = phc.split('$');
+  assert.doesNotMatch(parts[3] + parts[4], /=/);
+  assert.ok(await verifyPassword('long enough password', phc));
+  const pad = (b) => b + '='.repeat((4 - (b.length % 4)) % 4);
+  parts[3] = pad(parts[3]); parts[4] = pad(parts[4]);
+  assert.ok(await verifyPassword('long enough password', parts.join('$')));
 });

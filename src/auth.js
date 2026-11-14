@@ -8,17 +8,19 @@ const scrypt = promisify(crypto.scrypt);
 const N = 2 ** 15, R = 8, P = 1;
 export const SESSION_COOKIE = '__Host-fs_session';
 // Used to burn equal time when the email is unknown.
-const DUMMY = '$scrypt$ln=15,r=8,p=1$AAAAAAAAAAAAAAAAAAAAAA==$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+const DUMMY = '$scrypt$ln=15,r=8,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
 export function httpErr(status, message) {
   return Object.assign(new Error(message), { status });
 }
 
-/** PHC string: $scrypt$ln=15,r=8,p=1$<salt b64>$<hash b64> */
+/** PHC string: $scrypt$ln=15,r=8,p=1$<salt b64>$<hash b64>, unpadded B64 per the PHC spec (section 8.4).
+ *  Buffer.from(_, 'base64') reads padded and unpadded alike, so older padded hashes still verify. */
+const b64 = (b) => b.toString('base64').replace(/=+$/, '');
 export async function hashPassword(pw) {
   const salt = crypto.randomBytes(16);
   const h = await scrypt(pw, salt, 32, { N, r: R, p: P, maxmem: 128 * N * R * 2 });
-  return `$scrypt$ln=15,r=${R},p=${P}$${salt.toString('base64')}$${h.toString('base64')}`;
+  return `$scrypt$ln=15,r=${R},p=${P}$${b64(salt)}$${b64(h)}`;
 }
 export async function verifyPassword(pw, phc) {
   const m = /^\$scrypt\$ln=(\d+),r=(\d+),p=(\d+)\$([^$]+)\$([^$]+)$/.exec(phc || '');

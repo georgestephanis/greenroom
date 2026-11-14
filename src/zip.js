@@ -2,6 +2,7 @@
 // Reads the central directory from the file on disk; refuses encryption and zip64.
 import fs from 'node:fs';
 import zlib from 'node:zlib';
+import { Readable } from 'node:stream';
 import { httpErr } from './auth.js';
 import { cleanPath, contentType } from './util.js';
 
@@ -56,7 +57,8 @@ export async function importZip(file, cas, { maxFileBytes, maxSpaceBytes }) {
       const lh = await readAt(fh, r.off, 30);
       if (lh.readUInt32LE(0) !== 0x04034b50) throw httpErr(400, 'Corrupt zip entry');
       const start = r.off + 30 + lh.readUInt16LE(26) + lh.readUInt16LE(28);
-      let src = fs.createReadStream(file, { start, end: start + r.csize - 1 });
+      // createReadStream throws on an empty range (end < start), so an empty entry gets an empty stream.
+      let src = r.csize ? fs.createReadStream(file, { start, end: start + r.csize - 1 }) : Readable.from([]);
       if (r.method === 8) {
         const inf = zlib.createInflateRaw();
         src.on('error', (e) => inf.destroy(e));
