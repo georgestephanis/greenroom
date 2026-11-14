@@ -15,6 +15,8 @@ import { injectDocToken } from '../security.js';
 import { sha256hex, now } from '../util.js';
 
 const MAX_PAGES = 25600; // ~100 MB at 4 KiB pages: a runaway insert can't fill a small box
+const MAX_BYTES = 100 * 1024 * 1024; // database size cap; max_page_count is derived from the file's page size
+const MAX_SNAPSHOTS = 100; // the most `keep` allows
 const MAX_ROWS = 1000;
 const POLICY = ['off', 'read', 'read+insert', 'read+write'];
 const RANK = Object.fromEntries(POLICY.map((p, i) => [p, i]));
@@ -242,11 +244,14 @@ export default definePlugin({
           try { records = JSON.parse((await readBuf(await f.open(), 1 << 20)).toString('utf8')); } catch { warn('Snapshot list was not valid and was dropped.'); }
         } else if (/^snapshots\/[a-f0-9]{64}\.sqlite$/.test(f.rel) && f.history) {
           const sha = f.rel.slice(10, 74);
-          if ((await ctx.cas.storeStream(await f.open(), MAX_PAGES * 4096)).sha256 === sha) keep.add(sha);
-          else warn(`Snapshot ${sha.slice(0, 8)} did not match its checksum and was skipped.`);
+          if (keep.size >= MAX_SNAPSHOTS) { warn(`More than ${MAX_SNAPSHOTS} snapshots; the rest were skipped.`); continue; }
+          // ponytail: a blob that fails its checksum is already in the CAS; nothing references it, so the lazy GC reclaims it (bytes still count against the import budget).
+          const got = await ctx.cas.storeStream(await f.open(), MAX_BYTES).catch((e) => ({ error: e.message }));
+          if (got.sha256 === sha) keep.add(sha);
+          else warn(`Snapshot ${sha.slice(0, 8)} was skipped: ${got.error ?? 'checksum mismatch'}.`);
         }
       }
-      const snaps = (Array.isArray(records) ? records : []).filter((s) => keep.has(s?.sha256) && Number.isInteger(s.version));
+      const snaps = (Array.isArray(records) ? records : []).filter((s) => keep.has(s?.sha256) && Number.isInteger(s.version)).slice(0, MAX_SNAPSHOTS);
       writeState(dir, { schema: null, snapshots: snaps });
     });
   },
@@ -257,7 +262,7 @@ async function restore(ctx, dir, stream) {
   fs.mkdirSync(dir, { recursive: true });
   const tmp = path.join(ctx.tmpDir, `restore-${crypto.randomUUID()}`);
   let n = 0;
-  stream.on('data', (c) => { n += c.length; if (n > MAX_PAGES * 4096) stream.destroy(new Error('database is too large')); });
+  stream.on('data', (c) => { n += c.length; if (n > MAX_BYTES) stream.destroy(new Error('database is too large')); });
   try {
     await pipeline(stream, fs.createWriteStream(tmp));
     const head = Buffer.alloc(16), fd = fs.openSync(tmp, 'r');

@@ -1,12 +1,13 @@
 // M5: plugin loader, per-space enablement, the sqlite plugin and the watermark plugin (issue #214 section 11).
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { boot, client, setupAdmin } from './helpers.js';
 import { definePlugin } from '../src/plugins.js';
-import { withZip } from '../src/zip.js';
+import { withZip, ZipWriter } from '../src/zip.js';
 
 const DOC = { 'sec-fetch-dest': 'document' };
 const files = (o) => Object.entries(o).map(([p, content]) => ({ path: p, content }));
@@ -191,6 +192,54 @@ const exportTo = async (admin, slug, history) => {
   fs.writeFileSync(f, Buffer.from(await r.arrayBuffer()));
   return f;
 };
+
+/** Rebuild a bundle: `mutate(map, doc)` edits entries (name -> Buffer) and the parsed space.json. */
+async function rezip(file, mutate) {
+  const m = await entries(file);
+  const doc = JSON.parse(m.get('space.json'));
+  await mutate(m, doc);
+  m.set('space.json', Buffer.from(JSON.stringify(doc)));
+  const out = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fsx-')), 'r.zip');
+  const w = new ZipWriter(out);
+  for (const [k, v] of m) await w.add(k, v);
+  await w.finish();
+  return fs.readFileSync(out);
+}
+/** Make a zip's central directory claim `name` is `usize` bytes (a lying archive). */
+function lie(buf, name, usize) {
+  const at = buf.lastIndexOf(Buffer.from(name));
+  buf.writeUInt32LE(usize, at - 46 + 24);
+  return buf;
+}
+const importAs = (a, body, slug = 'copy') => a.fetch(`/api/import?slug=${slug}`, { method: 'POST', body, headers: { 'content-type': 'application/zip', 'x-csrf-token': a.csrf } });
+
+test('import: plugin files count against the space size limit, installed or not', async (x) => {
+  const { admin } = await world(x, { overrides: { maxSpaceBytes: 64 * 1024 } });
+  const base = await exportTo(admin, 'demo', true);
+  for (const plugin of ['ghost', 'sqlite']) {
+    const zip = await rezip(base, (m, doc) => {
+      doc.space.plugins = [plugin];
+      m.set(`plugins/${plugin}/big.bin`, Buffer.alloc(1024 * 1024));
+    });
+    assert.equal((await importAs(admin, zip, 'big-' + plugin)).status, 413, plugin);
+  }
+  // An entry that inflates past its declared size is skipped.
+  const lying = lie(await rezip(base, (m, doc) => {
+    doc.space.plugins = ['ghost'];
+    m.set('plugins/ghost/a.bin', Buffer.alloc(40 * 1024));
+  }), 'plugins/ghost/a.bin', 10);
+  const r = await importAs(admin, lying, 'liar');
+  assert.equal(r.status, 201, await r.clone().text());
+  assert.ok((await r.json()).warnings.some((w) => /ghost.*skipped|larger than its zip entry/.test(w)));
+  // At most 100 snapshots come in.
+  const many = await rezip(base, (m, doc) => {
+    doc.space.plugins = ['sqlite'];
+    for (let i = 0; i < 101; i++) m.set(`history/plugins/sqlite/snapshots/${crypto.createHash('sha256').update(String(i)).digest('hex')}.sqlite`, Buffer.from(String(i)));
+  });
+  const r2 = await importAs(admin, many, 'many');
+  assert.equal(r2.status, 201, await r2.clone().text());
+  assert.ok((await r2.json()).warnings.some((w) => /More than 100 snapshots/.test(w)));
+});
 
 test('sqlite: snapshots follow versions, and a database round-trips through both export zips', async (x) => {
   const { t, admin } = await world(x);

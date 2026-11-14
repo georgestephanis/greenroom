@@ -218,7 +218,8 @@ export function createPlugins({ store, config, installed = [] }) {
             const dest = path.join(base, f.history ? 'history' : '', f.rel);
             if (!dest.startsWith(base + path.sep)) continue;
             await fsp.mkdir(path.dirname(dest), { recursive: true });
-            await pipeline(await f.open(), fs.createWriteStream(dest));
+            try { await pipeline(await f.open(), fs.createWriteStream(dest)); }
+            catch (e) { await fsp.rm(dest, { force: true }); warn(`A file of plugin "${n}" was skipped: ${e.message}`); }
           }
           warn(`Plugin "${n}" is not enabled on this instance; its data was kept and will work once an admin installs and enables it.`);
         }

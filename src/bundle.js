@@ -3,6 +3,7 @@
 // disk entry by entry into CAS. Only the small JSON documents (space.json, versions.json, activity.json)
 // are held in memory, and each is capped at maxJsonBytes.
 import fs from 'node:fs';
+import { Transform } from 'node:stream';
 import { httpErr } from './auth.js';
 import { tx } from './db.js';
 import { withZip, ZipWriter } from './zip.js';
@@ -311,14 +312,24 @@ export async function importBundle(store, cred, file, { slug: wantSlug, replace 
     const orphan = raw.filter((r) => r.name.startsWith('history/blobs/') && !used.has(r.name)).length;
     if (orphan) warnings.push(`${orphan} blob(s) in the bundle are not used by any version and were skipped.`);
     const pluginFiles = {};
-    let stray = 0;
+    let stray = 0, pluginBytes = 0;
+    const capped = async (r) => {
+      let n = 0;
+      const t = new Transform({ transform(c, _e, cb) { n += c.length; cb(n > r.usize ? httpErr(413, `${r.name} is larger than its zip entry declares`) : null, c); } });
+      const src = await open(r);
+      src.on('error', (e) => t.destroy(e));
+      return src.pipe(t);
+    };
     for (const r of raw) {
       const m = /^(history\/)?plugins\/([^/]+)\/(.+)$/.exec(r.name);
       if (!m) continue;
       if (!pluginNames.includes(m[2])) { stray++; continue; }
-      (pluginFiles[m[2]] ??= []).push({ rel: m[3], history: !!m[1], open: () => open(r) });
+      (pluginFiles[m[2]] ??= []).push({ rel: m[3], history: !!m[1], open: () => capped(r) });
+      pluginBytes += r.usize;
     }
     if (stray) warnings.push(`${stray} file(s) for plugins the space does not list were skipped.`);
+    // Plugin data shares the space's byte budget with the site; each stream is held to its declared size.
+    if (pluginBytes > budget) throw httpErr(413, 'Bundle is larger than the space size limit');
 
     // ---- activity (history bundles only; a replace keeps the existing audit trail) ----
     let activity = [];
