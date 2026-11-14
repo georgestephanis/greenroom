@@ -83,6 +83,34 @@ test('revocation and expiry take effect on the next request', async (x) => {
   assert.equal((await admin.post('/api/spaces/alpha/links', { expires_at: '2001-01-01' })).status, 400);
 });
 
+test('expiry: expires_in or an exact time with an offset, validated, effective at that minute', async (x) => {
+  const { t, admin, link } = await world(x);
+  const near = (iso, ms) => assert.ok(Math.abs(Date.parse(iso) - Date.now() - ms) < 5000, iso);
+  near((await link('alpha', { expires_in: '7d' })).expires_at, 7 * 864e5);
+  near((await link('alpha', { expires_in: '12h' })).expires_at, 12 * 3600e3);
+  near((await link('alpha', { expires_in: '30m' })).expires_at, 30 * 60e3);
+
+  // An exact minute in -05:00 comes back as that instant in UTC, not the end of some day.
+  const T = Math.ceil((Date.now() + 120e3) / 60e3) * 60e3;
+  const local = new Date(T - 5 * 3600e3).toISOString().slice(0, 16) + '-05:00';
+  const l = await link('alpha', { expires_at: local });
+  assert.equal(l.expires_at, new Date(T).toISOString());
+
+  for (const body of [
+    { expires_at: '2001-01-01T00:00:00Z' }, { expires_at: new Date(Date.now() - 60e3).toISOString() },
+    { expires_at: '2026-12-01' }, { expires_at: '2026-12-01T10:00' }, { expires_at: '2027-02-30T10:00:00Z' }, { expires_at: 'soon' },
+    { expires_in: '0d' }, { expires_in: '7' }, { expires_in: '1w' }, { expires_in: '-1h' }, { expires_in: '366d' },
+    { expires_at: new Date(Date.now() + 400 * 864e5).toISOString() }, { expires_at: local, expires_in: '1d' },
+  ]) assert.equal((await admin.post('/api/spaces/alpha/links', body)).status, 400, JSON.stringify(body));
+
+  const v = client(t.base);
+  await v.fetch(path(l.url));
+  x.mock.timers.enable({ apis: ['Date'], now: T - 1000 });
+  assert.equal((await v.fetch('/s/alpha/a.css')).status, 200, 'still live a second before');
+  x.mock.timers.setTime(T + 1000);
+  assert.equal((await v.fetch('/s/alpha/a.css')).status, 401, 'dead a second after');
+});
+
 test('max uses are spent per cookie issued, not per view; previews and HEAD spend nothing', async (x) => {
   const { t, admin, link } = await world(x);
   const l = await link('alpha', { max_uses: 2 });
@@ -228,6 +256,7 @@ test('branding shows on the password, 404 and expired pages; bad values are refu
   assert.match(sp, /id="sharing"/);
   assert.doesNotMatch(sp, /sfl_/, 'the URL is shown only when the link is created');
   assert.match(sp, /<option value="link" selected>/);
+  assert.match(sp, /<select name="expires_in" data-expiry>.*<option value="7d">.*data-custom hidden>Custom…<\/option><\/select>.*type="datetime-local"/s, 'presets work without JS; Custom needs it');
   for (const p of pages) {
     const h = await p.text();
     assert.match(h, /Acme &lt;Studio&gt;/);

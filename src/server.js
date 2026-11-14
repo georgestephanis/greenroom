@@ -183,7 +183,7 @@ export function createApp(overrides = {}) {
           const next = `/spaces/${space.slug}#sharing`;
           if (!seg[3] && m === 'GET') return { status: 200, body: { links: store.links(space).map((g) => pubLink(req, space, g)) } };
           if (!seg[3] && m === 'POST') {
-            const g = await store.createLink(cred, space, { label: body.label, expires_at: body.expires_at, password: body.password, max_uses: body.max_uses });
+            const g = await store.createLink(cred, space, { label: body.label, expires_at: body.expires_at, expires_in: body.expires_in, password: body.password, max_uses: body.max_uses });
             const link = pubLink(req, store.spaceById(space.id), g);
             return { status: 201, body: { link }, shownOnce: { title: 'New share link', value: link.url, back: next } };
           }

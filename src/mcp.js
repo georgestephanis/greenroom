@@ -29,8 +29,8 @@ export const TOOLS = [
   { name: 'rollback', description: 'Make an earlier version live again (as a new version).', inputSchema: obj({ ...slugArg, version: { type: 'integer' } }) },
   {
     name: 'create_share_link',
-    description: 'Create a share link for a client and return its URL (shown only this once). A team-only space switches to "Anyone with the link". Optional expiry (ISO date), password and max uses.',
-    inputSchema: obj({ ...slugArg, label: { type: 'string' }, expires_at: { type: 'string' }, password: { type: 'string' }, max_uses: { type: 'integer' } }, ['slug']),
+    description: 'Create a share link for a client and return its URL (shown only this once). A team-only space switches to "Anyone with the link". Optional expiry (expires_at, an ISO-8601 date and time with a timezone, or expires_in like "30m", "12h", "7d"; not both; at most a year), password (8+ characters) and max uses. Returns the resolved expires_at in UTC.',
+    inputSchema: obj({ ...slugArg, label: { type: 'string' }, expires_at: { type: 'string', description: 'e.g. 2026-12-01T17:00:00-05:00' }, expires_in: { type: 'string', description: 'e.g. 7d, 12h, 30m' }, password: { type: 'string' }, max_uses: { type: 'integer' } }, ['slug']),
   },
   { name: 'revoke_share_link', description: 'Revoke a share link; anyone holding it loses access at once.', inputSchema: obj({ ...slugArg, id: { type: 'string', description: 'Link id from create_share_link' } }) },
 ];

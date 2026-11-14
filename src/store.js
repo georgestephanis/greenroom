@@ -9,6 +9,30 @@ const META_FILES = 256 * 1024;
 const PRIVACY = ['team', 'link', 'public'];
 const LINK_KINDS = "('share_link','password')";
 
+const UNIT = { m: 60e3, h: 3600e3, d: 864e5 };
+const MAX_EXPIRY = 365 * 864e5;
+/** expires_at (ISO-8601 datetime with Z or an offset) or expires_in ("30m", "12h", "7d"), not both → UTC ISO or null. */
+export function linkExpiry(at, inn, nowMs = Date.now()) {
+  at = at ? String(at) : ''; inn = inn ? String(inn) : '';
+  if (at && inn) throw httpErr(400, 'Give expires_at or expires_in, not both');
+  if (!at && !inn) return null;
+  let ms;
+  if (inn) {
+    const m = /^(\d{1,6})([mhd])$/.exec(inn);
+    if (!m || m[1][0] === '0') throw httpErr(400, 'expires_in must look like 30m, 12h or 7d');
+    ms = nowMs + Number(m[1]) * UNIT[m[2]];
+  } else {
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:\d{2})$/.test(at)) throw httpErr(400, 'expires_at must be an ISO-8601 date and time with a timezone, like 2026-12-01T17:00:00Z');
+    ms = Date.parse(at);
+    // Date.parse rolls 2026-02-30 over to March; shifting back by the offset must give the same calendar day.
+    const off = /Z$/.test(at) ? 0 : (at.at(-6) === '-' ? -1 : 1) * (Number(at.slice(-5, -3)) * 60 + Number(at.slice(-2))) * 60e3;
+    if (isNaN(ms) || new Date(ms + off).toISOString().slice(0, 10) !== at.slice(0, 10)) throw httpErr(400, 'expires_at is not a real date and time');
+    if (ms <= nowMs) throw httpErr(400, 'expires_at must be in the future');
+  }
+  if (ms - nowMs > MAX_EXPIRY) throw httpErr(400, 'A share link can expire at most a year from now');
+  return new Date(ms).toISOString();
+}
+
 export class Store {
   constructor(db, cas, config) {
     this.db = db;
@@ -98,15 +122,9 @@ export class Store {
       && (g.max_uses == null || g.uses_count <= g.max_uses);
   }
 
-  async createLink(cred, space, { label, expires_at, password, max_uses }) {
+  async createLink(cred, space, { label, expires_at, expires_in, password, max_uses }) {
     const name = String(label || '').trim().slice(0, 200) || 'Share link';
-    let exp = null;
-    if (expires_at) {
-      const d = new Date(/^\d{4}-\d{2}-\d{2}$/.test(expires_at) ? `${expires_at}T23:59:59Z` : expires_at);
-      if (isNaN(d)) throw httpErr(400, 'expires_at must be a date');
-      if (d <= new Date()) throw httpErr(400, 'expires_at must be in the future');
-      exp = d.toISOString();
-    }
+    const exp = linkExpiry(expires_at, expires_in);
     let max = null;
     if (max_uses !== undefined && max_uses !== null && max_uses !== '') {
       max = Number(max_uses);

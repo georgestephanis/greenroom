@@ -424,6 +424,13 @@ test('share links over MCP need the share scope; an agent can reach link mode bu
     assert.equal((await patch('team')).status, 200);
     const third = (await call(t, access_token, 'create_share_link', { slug: 'alpha' })).body.result.structuredContent;
     assert.match(third.note, /now "Anyone with the link"\. Only this new link is live; 2 link\(s\) paused earlier stay paused/);
+    const timed = (await call(t, access_token, 'create_share_link', { slug: 'alpha', expires_at: '2030-06-01T09:30:00+02:00' })).body.result;
+    assert.equal(timed.isError, true, 'more than a year out');
+    const week = (await call(t, access_token, 'create_share_link', { slug: 'alpha', expires_in: '7d' })).body.result.structuredContent;
+    assert.match(week.link.expires_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.ok(Math.abs(Date.parse(week.link.expires_at) - Date.now() - 7 * 864e5) < 5000);
+    const both = (await call(t, access_token, 'create_share_link', { slug: 'alpha', expires_in: '1d', expires_at: week.link.expires_at })).body.result;
+    assert.match(both.content[0].text, /not both/);
     const rev = await call(t, access_token, 'revoke_share_link', { slug: 'alpha', id: link.id });
     assert.ok(rev.body.result.structuredContent.link.revoked_at);
     // Out-of-scope space: no link there either.

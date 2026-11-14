@@ -85,7 +85,8 @@ function sharing(cred, space, links) {
 ${links.length ? `<table><thead><tr><th>Link</th><th>Status</th><th>Uses</th><th>Views</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<p>No share links yet. Creating one switches a team-only space to “Anyone with the link”.</p>'}
 <form method="post" action="/api/spaces/${esc(space.slug)}/links">${hidden(cred)}<h3>New link</h3>
 <label>Label <input name="label" placeholder="Acme — CFO" maxlength="200"></label>
-<label>Expires <input type="date" name="expires_at"></label>
+<label>Expires <select name="expires_in" data-expiry><option value="">Never</option><option value="1d">In 1 day</option><option value="7d">In 1 week</option><option value="30d">In 30 days</option><option value="" data-custom hidden>Custom…</option></select></label>
+<label hidden>Expires at (your local time) <input type="datetime-local" data-expiry-local><input type="hidden" name="expires_at"></label>
 <label>Password <input type="password" name="password" autocomplete="new-password"></label>
 <label>Max uses <input type="number" name="max_uses" min="1" step="1"></label>
 <button>Create link</button></form><small>A use is spent each time a new browser opens the link. Views count page loads.</small></section>`;
@@ -162,6 +163,14 @@ export const APP_JS = `
       if (r.ok) location.reload();
       else status.textContent = (await r.json().catch(() => ({}))).error || 'Upload failed';
     });
+  }
+  // Expiry: the Custom option needs JS, since datetime-local has no timezone; it is sent as UTC ISO.
+  for (const sel of document.querySelectorAll('select[data-expiry]')) {
+    const f = sel.form, local = f.querySelector('[data-expiry-local]'), out = f.elements.expires_at;
+    const custom = () => !!sel.selectedOptions[0].dataset.custom;
+    sel.querySelector('[data-custom]').hidden = false;
+    sel.addEventListener('change', () => { local.parentElement.hidden = !custom(); local.required = custom(); });
+    f.addEventListener('submit', () => { out.value = custom() && local.value ? new Date(local.value).toISOString() : ''; });
   }
 })();
 `;
