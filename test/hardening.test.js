@@ -70,3 +70,11 @@ test('login throttle: per account+IP, counted before verifying, proxy-aware', as
   assert.equal((await login('ada@example.com', '9.9.9.9', 'correct horse battery')).status, 429);
   assert.equal((await login('ada@example.com', '8.8.8.8', 'correct horse battery')).status, 200); // other clients unaffected
 });
+
+test('unauthenticated POSTs need same-origin Fetch Metadata or a same-host Origin (login CSRF)', async (x) => {
+  const t = await boot(); x.after(t.close);
+  const host = new URL(t.base).host;
+  const setup = (headers) => client(t.base).json('/api/setup', { name: 'A', email: 'a@example.com', password: 'long enough password' }, 'POST', headers);
+  for (const h of [{ 'sec-fetch-site': 'cross-site' }, { 'sec-fetch-site': '' }, { 'sec-fetch-site': '', origin: 'https://evil.example' }]) assert.equal((await setup(h)).status, 403, JSON.stringify(h));
+  assert.equal((await setup({ 'sec-fetch-site': '', origin: `http://${host}` })).status, 201);
+});

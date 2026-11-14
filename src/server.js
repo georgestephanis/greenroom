@@ -242,7 +242,7 @@ export function createApp(overrides = {}) {
           catch { throw httpErr(400, 'Malformed body'); }
         }
       }
-      const refusal = checkWrite(req, cred, body);
+      const refusal = checkWrite(req, cred, body, config.publicUrl);
       if (refusal) throw httpErr(403, refusal);
       if (isUpload) {
         if (!cred) throw httpErr(401, 'Sign in required');

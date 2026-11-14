@@ -101,7 +101,7 @@ export const isDocumentRequest = (req) => ['document', 'iframe'].includes(req.he
 
 // Rule 4: writes need Sec-Fetch-Site: same-origin and a CSRF token; Origin: null is rejected outright.
 // Bearer-authenticated requests are exempt (they carry no ambient cookie).
-export function checkWrite(req, cred, body) {
+export function checkWrite(req, cred, body, publicUrl = '') {
   if (req.headers.origin === 'null') return 'Origin: null is not allowed';
   // resolve() uses only the Bearer header when present, so no ambient cookie is in play.
   if (cred?.via === 'bearer' || /^Bearer /.test(req.headers.authorization || '')) return null;
@@ -110,8 +110,15 @@ export function checkWrite(req, cred, body) {
     if (site !== 'same-origin') return 'Cross-site request refused';
     const token = req.headers['x-csrf-token'] ?? body?._csrf;
     if (!token || !safeEqual(token, cred.csrf)) return 'Missing or invalid CSRF token';
-  } else if (site && site !== 'same-origin') {
-    return 'Cross-site request refused';
+  } else if (site) {
+    if (site !== 'same-origin') return 'Cross-site request refused';
+  } else {
+    // No Fetch Metadata (older browser or non-browser): require a same-host Origin, so a cross-site
+    // form can't log the victim into the attacker's account (login CSRF) or hit setup/invite accept.
+    const o = req.headers.origin;
+    let host = null;
+    try { host = new URL(o).host; } catch {}
+    if (!host || (host !== req.headers.host && o !== (publicUrl && new URL(publicUrl).origin))) return 'Cross-site request refused';
   }
   return null;
 }
