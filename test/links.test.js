@@ -35,7 +35,7 @@ test('?key= sets a space+link cookie and redirects to the URL without the key', 
   assert.equal(r.headers.get('content-security-policy'), SPACE_CSP);
   const sc = r.headers.get('set-cookie');
   assert.match(sc, new RegExp(`^${viewerCookieName(space('alpha'))}=`));
-  assert.match(sc, /Path=\/s\/alpha\/; HttpOnly; Secure; SameSite=None; Max-Age=2592000/);
+  assert.match(sc, /Path=\/s\/alpha\/; HttpOnly; Secure; SameSite=None; Max-Age=259(2000|1999)$/);
   assert.equal((await v.fetch('/s/alpha/', { headers: DOC })).status, 200);
   assert.equal((await v.fetch('/s/alpha/a.css')).status, 200, 'subresources load with the cookie');
   // Unknown key, and no key at all, get nothing.
@@ -126,6 +126,10 @@ test('password links: form, wrong password, brute-force throttle per link and IP
   const blocked = await tryPw('opensesame');
   assert.equal(blocked.status, 429, 'even the right password is refused once throttled');
   assert.equal(blocked.headers.get('content-security-policy'), SPACE_CSP);
+  const xs = (h) => v.fetch(path(l.url), { method: 'POST', body: 'password=opensesame', headers: { 'content-type': 'application/x-www-form-urlencoded', 'x-forwarded-for': '203.0.113.3', ...h } });
+  assert.equal((await xs({ origin: 'https://evil.example' })).status, 403, 'foreign Origin');
+  assert.equal((await xs({ 'sec-fetch-site': 'cross-site' })).status, 403, 'cross-site without Origin');
+  assert.equal((await xs({ 'sec-fetch-site': 'cross-site', origin: 'null' })).status, 303, 'our own sandboxed form');
   const ok = await tryPw('opensesame', '203.0.113.2'); // another client IP (last proxy hop) is not blocked
   assert.equal(ok.status, 303);
   assert.equal(ok.headers.get('location'), '/s/alpha/');

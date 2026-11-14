@@ -34,6 +34,17 @@ async function formPassword(req) {
   return new URLSearchParams(raw).get('password');
 }
 
+// The Open and password forms post from our own sandboxed page, so the browser sends Origin: null and
+// Sec-Fetch-Site: cross-site; allow that, refuse a real foreign origin or a cross-site POST without one.
+// ponytail: a sandboxed iframe elsewhere also sends Origin: null; add an HMAC form token if that matters.
+function crossSite(req) {
+  const o = req.headers.origin;
+  if (o === 'null') return false;
+  if (o) { try { return new URL(o).host !== req.headers.host; } catch { return true; } }
+  const site = req.headers['sec-fetch-site'];
+  return !!site && site !== 'same-origin' && site !== 'none';
+}
+
 export function createSpaceHandler({ store, auth, config, clientIp, throttle }) {
   const viewerFor = (space, cookies) => verifyViewer(config.secret, space, cookies[viewerCookieName(space)]);
 
@@ -57,6 +68,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
         err || (g.secret_hash ? 'Enter the password you were given to open this page.' : 'Someone shared a page with you.'),
         `<form method="post">${g.secret_hash ? '<input type="password" name="password" autocomplete="current-password" autofocus required aria-label="Password">' : ''}<button>Open</button></form>`);
       if (req.method !== 'POST') return send(res, 200, form(), HTML);
+      if (crossSite(req)) return send(res, 403, form('Open this link directly rather than from another site.'), HTML);
       if (g.secret_hash) {
         // Per link+IP (clientIp honours trustProxy), counted before the scrypt await.
         const tkey = `link|${g.id}|${clientIp(req)}`;
