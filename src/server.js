@@ -86,9 +86,11 @@ export function createApp(overrides = {}) {
     }
     if (a === 'invites' && b === 'accept' && m === 'POST') {
       const inv = db.prepare('SELECT * FROM invites WHERE token_hash = ? AND used_at IS NULL AND expires_at > ?').get(sha256hex(String(body.token || '')), now());
-      if (!inv) throw httpErr(400, 'This invite is invalid or has expired');
-      const u = await auth.createUser({ email: body.email, password: body.password, role: inv.role, name: body.name });
-      db.prepare('UPDATE invites SET used_at = ? WHERE id = ?').run(now(), inv.id);
+      // Claim before the (slow) scrypt await, so parallel accepts can't each create an account.
+      if (!inv || db.prepare('UPDATE invites SET used_at = ? WHERE id = ? AND used_at IS NULL').run(now(), inv.id).changes !== 1) throw httpErr(400, 'This invite is invalid or has expired');
+      let u;
+      try { u = await auth.createUser({ email: body.email, password: body.password, role: inv.role, name: body.name }); }
+      catch (e) { db.prepare('UPDATE invites SET used_at = NULL WHERE id = ?').run(inv.id); throw e; }
       res.setHeader('Set-Cookie', sessionCookie(auth.createSession(u.id, { userAgent: req.headers['user-agent'], ip })));
       return { status: 201, body: { ok: true }, next: '/' };
     }

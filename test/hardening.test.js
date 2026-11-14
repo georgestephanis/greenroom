@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { CAS } from '../src/cas.js';
+import { boot, client, setupAdmin } from './helpers.js';
 import { compilePattern, matchRule, parseHeadersFile } from '../src/routing.js';
 
 test('redirect patterns: placeholders must be whole segments (no ReDoS)', () => {
@@ -37,4 +38,16 @@ test('GC keeps a blob that a new write or a fresh version reuses', async () => {
   await cas.gc(new Set(), 3600e3);
   assert.ok(cas.has(a) && !cas.has(b));
   fs.rmSync(dir, { recursive: true, force: true });
+});
+
+test('an invite can be redeemed once, even in parallel', async (x) => {
+  const t = await boot(); x.after(t.close);
+  const admin = await setupAdmin(t);
+  const token = (await (await admin.post('/api/invites', { role: 'admin' })).json()).invite.split('/').pop();
+  const accept = (i) => client(t.base).json('/api/invites/accept', { token, name: 'B', email: `b${i}@example.com`, password: 'long enough password' });
+  const bad = await client(t.base).json('/api/invites/accept', { token, name: 'B', email: 'x@example.com', password: 'short' });
+  assert.equal(bad.status, 400); // a failed attempt releases the claim
+  const codes = (await Promise.all([0, 1, 2].map(accept))).map((r) => r.status).sort();
+  assert.deepEqual(codes, [201, 400, 400]);
+  assert.equal(t.db.prepare('SELECT COUNT(*) c FROM users').get().c, 2);
 });
