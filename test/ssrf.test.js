@@ -40,9 +40,9 @@ test('redirects are not followed', async (t) => {
 });
 
 test('private IPv4, IPv6, IPv4-mapped and NAT64/6to4 addresses are refused before connecting', async () => {
-  for (const host of ['127.0.0.1', '[::1]', '[fd00::1]', '[fe80::1]', '[::ffff:127.0.0.1]', '[::ffff:7f00:1]', '[64:ff9b::a00:1]', '[64:ff9b:1::1]']) {
+  for (const host of ['127.0.0.1', '[::1]', '[fd00::1]', '[fe80::1]', '[::ffff:127.0.0.1]', '[::ffff:7f00:1]', '[64:ff9b::a00:1]', '[64:ff9b:1::1]', '[2002:7f00:1::1]']) {
     await assert.rejects(fetchJson(`https://${host}/c.json`), /Blocked private address/, host);
   }
-  for (const ip of ['64:ff9b:1::1']) assert.ok(isPrivateIp(ip), ip);
+  for (const ip of ['64:ff9b:1::1', '2002::1']) assert.ok(isPrivateIp(ip), ip);
   assert.ok(!isPrivateIp('2606:4700::1111'));
 });

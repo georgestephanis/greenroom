@@ -18,7 +18,8 @@ export function isPrivateIp(ip) {
   const s = ip.toLowerCase();
   const mapped = /^(?:::ffff:|64:ff9b::)(\d+\.\d+\.\d+\.\d+)$/.exec(s);
   if (mapped) return isPrivateIpv4(mapped[1]);
-  if (s.startsWith('::ffff:') || s.startsWith('64:ff9b:')) return true; // hex-form mapped: fail closed
+  // Embedded-IPv4 forms (mapped, NAT64 incl. local-use 64:ff9b:1::/48, 6to4 2002::/16): fail closed.
+  if (s.startsWith('::ffff:') || s.startsWith('64:ff9b:') || s.startsWith('2002:')) return true;
   return s === '::1' || s === '::' || /^f[cd]/.test(s) || /^fe[89ab]/.test(s) || /^fe[c-f]/.test(s) || s.startsWith('ff');
 }
 
