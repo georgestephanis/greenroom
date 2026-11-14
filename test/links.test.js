@@ -103,8 +103,17 @@ test('max uses are spent per cookie issued, not per view; previews and HEAD spen
   assert.equal((await a.fetch('/s/alpha/a.css')).status, 200, 'existing holders keep access');
   const [row] = (await (await admin.fetch('/api/spaces/alpha/links')).json()).links;
   assert.equal(row.uses, 2);
-  assert.equal(row.view_count, 3, 'document views counted, subresources not');
+  assert.equal(row.view_count, 1, 'reloads within a minute count once');
   assert.ok(row.first_viewed_at && row.last_viewed_at);
+  // Older than a minute: the next 2xx document load counts; a 404 document or a subresource doesn't.
+  const backdate = () => t.db.prepare('UPDATE grants SET last_viewed_at = ? WHERE id = ?').run(new Date(Date.now() - 61e3).toISOString(), l.id);
+  const views = () => t.db.prepare('SELECT view_count FROM grants WHERE id = ?').get(l.id).view_count;
+  backdate();
+  assert.equal((await a.fetch('/s/alpha/nope', { headers: DOC })).status, 404);
+  await a.fetch('/s/alpha/a.css');
+  assert.equal(views(), 1);
+  await a.fetch('/s/alpha/', { headers: DOC });
+  assert.equal(views(), 2);
   // Unlimited links still open straight from GET; HEAD sets no cookie there either.
   const u = await link('alpha');
   const head = await client(t.base).fetch(path(u.url), { method: 'HEAD' });
@@ -204,6 +213,7 @@ test('creating a link on a team space enables only that link; a person resumes t
 
 test('branding shows on the password, 404 and expired pages; bad values are refused', async (x) => {
   const { t, admin, link } = await world(x);
+  assert.doesNotMatch(await (await client(t.base).fetch('/s/nope/')).text(), /Acme/); // warms the branding cache
   assert.equal((await admin.post('/api/admin/branding', { name: 'Acme', logo: 'javascript:alert(1)' })).status, 400);
   assert.equal((await admin.post('/api/admin/branding', { name: 'Acme', accent: 'red;}' })).status, 400);
   assert.equal((await admin.post('/api/admin/branding', { name: 'Acme <Studio>', logo: 'https://acme.example/logo.png', accent: '#ff0066' })).status, 200);

@@ -154,13 +154,18 @@ export class Store {
     return this.db.prepare('UPDATE grants SET uses_count = uses_count + 1, last_used_at = ? WHERE id = ? AND (max_uses IS NULL OR uses_count < max_uses)')
       .run(now(), g.id).changes === 1;
   }
+  /** One write per link per minute at most: reloads within 60 s of the last view don't count. */
   recordView(g) {
     const t = now();
-    this.db.prepare('UPDATE grants SET view_count = view_count + 1, first_viewed_at = COALESCE(first_viewed_at, ?), last_viewed_at = ? WHERE id = ?').run(t, t, g.id);
+    this.db.prepare('UPDATE grants SET view_count = view_count + 1, first_viewed_at = COALESCE(first_viewed_at, ?), last_viewed_at = ? WHERE id = ? AND (last_viewed_at IS NULL OR last_viewed_at < ?)')
+      .run(t, t, g.id, new Date(Date.now() - 60e3).toISOString());
   }
 
   // ---- instance branding (meta table) ----
   branding() {
+    return (this._brand ??= this.readBranding()); // read on every space page; cleared by setBranding
+  }
+  readBranding() {
     const rows = this.db.prepare("SELECT key, value FROM meta WHERE key IN ('brand_name','brand_logo','brand_accent')").all();
     const m = Object.fromEntries(rows.map((r) => [r.key.slice(6), r.value]));
     return { name: m.name || '', logo: m.logo || '', accent: m.accent || '' };
@@ -173,6 +178,7 @@ export class Store {
     if (accent && !/^#[0-9a-f]{6}$/i.test(accent)) throw httpErr(400, 'Accent must be a colour like #1a73e8');
     const up = this.db.prepare('INSERT INTO meta (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value');
     tx(this.db, () => { up.run('brand_name', name); up.run('brand_logo', logo); up.run('brand_accent', accent); });
+    this._brand = null;
     this.log(cred, 'instance.branding', null, { name, logo, accent });
     return this.branding();
   }

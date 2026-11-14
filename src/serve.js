@@ -104,6 +104,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
 
     // ---- who may view? every mode ends at the same space-bound viewer cookie (rule 6) ----
     const cookies = parseCookies(req.headers.cookie);
+    let viewedLink = null;
     if (keyed) return linkEntry(req, res, url, space, cookies, brand);
     if (space.privacy !== 'public') {
       const viewer = viewerFor(space, cookies);
@@ -115,7 +116,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
         const g = store.link(space, viewer.subject);
         ok = store.linkLive(space, g);
         deadLink = !ok;
-        if (ok && isDocumentRequest(req)) store.recordView(g);
+        if (ok) viewedLink = g;
       }
       if (!ok) {
         // The Strict dashboard cookie only arrives on same-site navigations; use it to mint a viewer cookie.
@@ -192,6 +193,9 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle }) 
       if (!nf) return send(res, 404, page(brand, 'Not found', 'No such file in this space.'), HTML);
       file = nf;
     }
+
+    // A view is a 2xx document load through a link (304s, 404s and subresources don't count).
+    if (viewedLink && status === 200 && isDocumentRequest(req)) store.recordView(viewedLink);
 
     // ---- tenant headers (rule 2: reserved ones never get through, even if a stale manifest has them) ----
     const { kept } = filterTenantHeaders(computeHeadersForPath(routing.headers || [], '/' + rel.replace(/^\/+/, '')));
