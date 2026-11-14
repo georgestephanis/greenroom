@@ -108,7 +108,7 @@ export class OAuth {
   }
 
   #issue(grantId) {
-    const access = 'fso_' + randomToken(32), refresh = 'fsr_' + randomToken(32), t = now();
+    const access = 'gro_' + randomToken(32), refresh = 'grr_' + randomToken(32), t = now();
     const ins = this.db.prepare('INSERT INTO oauth_tokens (token_hash,grant_id,kind,created_at,expires_at) VALUES (?,?,?,?,?)');
     ins.run(sha256hex(access), grantId, 'access', t, later(ACCESS_TTL));
     ins.run(sha256hex(refresh), grantId, 'refresh', t, later(REFRESH_TTL));

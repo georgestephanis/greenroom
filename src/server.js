@@ -195,7 +195,7 @@ export function createApp(overrides = {}) {
       const list = (v) => (v === undefined ? [] : Array.isArray(v) ? v : [v]);
       const scope = normaliseScope({ spaces: list(body.spaces).filter((s) => store.space(s)), create: body.create === '1' || body.create === true, perms: list(body.perms) });
       if (!scope) throw httpErr(400, 'Unknown permission');
-      const token = 'fsa_' + randomToken(32), name = String(body.name || '').trim().slice(0, 80) || 'Agent token';
+      const token = 'gra_' + randomToken(32), name = String(body.name || '').trim().slice(0, 80) || 'Agent token';
       db.prepare("INSERT INTO api_keys (id,name,key_hash,token_prefix,user_id,created_at,kind,scope_json) VALUES (?,?,?,?,?,?,'agent_token',?)")
         .run(newId('key'), name, sha256hex(token), token.slice(0, 12), cred.userId, now(), JSON.stringify(scope));
       return { status: 201, body: { token, name, scope: scopeString(scope) }, minted: token };

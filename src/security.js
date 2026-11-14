@@ -41,7 +41,7 @@ export function filterTenantHeaders(headers) {
 }
 
 // Rule 5: plugin cookies are pinned to one space and prefixed so they cannot collide with ours.
-const RESERVED_COOKIE = /^(__host-|__secure-|fs_|fsv_|fsp_)/i;
+const RESERVED_COOKIE = /^(__host-|__secure-|gr_|grv_|grp_)/i;
 export function rewriteSetCookie(values, space) {
   const out = [];
   for (const raw of [].concat(values ?? [])) {
@@ -51,13 +51,13 @@ export function rewriteSetCookie(values, space) {
     const name = parts[0].slice(0, eq), value = parts[0].slice(eq + 1);
     if (RESERVED_COOKIE.test(name)) continue;
     const keep = parts.slice(1).filter((a) => /^(max-age|expires|httponly)\b/i.test(a));
-    out.push([`fsp_${space.id.slice(4, 12)}_${name}=${value}`, `Path=/s/${space.slug}/`, 'Secure', 'SameSite=None', ...keep].join('; '));
+    out.push([`grp_${space.id.slice(4, 12)}_${name}=${value}`, `Path=/s/${space.slug}/`, 'Secure', 'SameSite=None', ...keep].join('; '));
   }
   return out;
 }
 
 // Rule 6: viewer cookies are bound to ONE space id by HMAC. Path is a convenience, not the boundary.
-export const viewerCookieName = (space) => `fsv_${space.id.slice(4, 12)}`;
+export const viewerCookieName = (space) => `grv_${space.id.slice(4, 12)}`;
 
 export function signViewer(secret, space, subject, ttlMs, kind = 'team') {
   const exp = Date.now() + ttlMs;

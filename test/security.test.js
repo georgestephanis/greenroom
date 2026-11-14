@@ -55,7 +55,7 @@ test('rule 3: dashboard session cookie attributes', async (x) => {
   const t = await boot(); x.after(t.close);
   const r = await client(t.base).json('/api/setup', { name: 'A', email: 'a@example.com', password: 'longenoughpass' });
   const sc = r.headers.getSetCookie()[0];
-  assert.match(sc, /^__Host-fs_session=/);
+  assert.match(sc, /^__Host-gr_session=/);
   for (const a of ['HttpOnly', 'Secure', 'SameSite=Strict', 'Path=/']) assert.ok(sc.includes(a), a);
   assert.ok(!/Domain=/i.test(sc));
 });
@@ -76,15 +76,15 @@ test('rule 4: writes need CSRF + same-origin; Origin null refused; bearer exempt
   const nullOrigin = await admin.json('/api/spaces', { name: 'Two' }, 'POST', { 'x-csrf-token': admin.csrf, origin: 'null' });
   assert.equal(nullOrigin.status, 403);
   // bearer requests skip the cookie checks (they get a 401 here only because the token is unknown)
-  const bearer = await client(t.base).json('/api/spaces', { name: 'x' }, 'POST', { authorization: 'Bearer fsa_unknowntokenvalue', 'sec-fetch-site': 'cross-site' });
+  const bearer = await client(t.base).json('/api/spaces', { name: 'x' }, 'POST', { authorization: 'Bearer gra_unknowntokenvalue', 'sec-fetch-site': 'cross-site' });
   assert.equal(bearer.status, 401);
 });
 
 test('rule 5: plugin Set-Cookie is rewritten and reserved names dropped', () => {
   const space = { id: 'spc_abcdefghijklmnop', slug: 'demo' };
-  const out = rewriteSetCookie(['sid=1; Path=/; Domain=evil.com; HttpOnly; SameSite=Lax', '__Host-fs_session=x', 'fsv_abc=y', 'fs_x=1'], space);
+  const out = rewriteSetCookie(['sid=1; Path=/; Domain=evil.com; HttpOnly; SameSite=Lax', '__Host-gr_session=x', 'grv_abc=y', 'gr_x=1'], space);
   assert.equal(out.length, 1);
-  assert.match(out[0], /^fsp_abcdefgh_sid=1; Path=\/s\/demo\/; Secure; SameSite=None; HttpOnly$/);
+  assert.match(out[0], /^grp_abcdefgh_sid=1; Path=\/s\/demo\/; Secure; SameSite=None; HttpOnly$/);
   assert.ok(!/Domain/i.test(out[0]));
 });
 
@@ -106,7 +106,7 @@ test('team-only space: login mints a space-bound HttpOnly viewer cookie; removed
   assert.equal((await anon.fetch('/s/demo/a.css')).status, 401);
   const r = await admin.fetch('/s/demo/', { headers: { 'sec-fetch-dest': 'document' } });
   assert.equal(r.status, 200);
-  const vc = r.headers.getSetCookie().find((c) => c.startsWith('fsv_'));
+  const vc = r.headers.getSetCookie().find((c) => c.startsWith('grv_'));
   assert.ok(vc.includes('HttpOnly') && vc.includes('Secure') && vc.includes('SameSite=None') && vc.includes('Path=/s/demo/'));
   // the viewer cookie alone (no dashboard session) now opens assets
   const viewer = client(t.base);
@@ -184,11 +184,11 @@ test('rule 6: a viewer cookie for space A is rejected on space B over HTTP', asy
   const admin = await withSpace(t, 'team', { 'index.html': 'a' }, 'a');
   await admin.post('/api/spaces', { name: 'B', slug: 'b' });
   await admin.post('/api/spaces/b/versions', { files: files({ 'index.html': 'b' }) });
-  const vc = (await admin.fetch('/s/a/', { headers: { 'sec-fetch-dest': 'document' } })).headers.getSetCookie().find((c) => c.startsWith('fsv_'));
+  const vc = (await admin.fetch('/s/a/', { headers: { 'sec-fetch-dest': 'document' } })).headers.getSetCookie().find((c) => c.startsWith('grv_'));
   const value = vc.split(';')[0].split('=')[1];
   const bId = t.db.prepare("SELECT id FROM spaces WHERE slug = 'b'").get().id;
   const thief = client(t.base);
-  thief.jar.set(`fsv_${bId.slice(4, 12)}`, value);
+  thief.jar.set(`grv_${bId.slice(4, 12)}`, value);
   assert.equal((await thief.fetch('/s/b/')).status, 401);
 });
 

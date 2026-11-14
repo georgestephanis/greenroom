@@ -38,7 +38,7 @@ export default definePlugin({
 | Hook | What it does |
 | --- | --- |
 | `ctx.transform(fn)` | Rewrite HTML documents as they are served. `fn({html, viewer, settings, docToken})` returns new HTML or nothing. `viewer.kind` is `team`, `link` (with `viewer.label`, the share link's label) or `public`. Only document loads of 200 HTML responses up to 8 MB are offered; stored files never change. |
-| `ctx.serve({path, methods, auth, handler})` | A route under `/s/{slug}/_fs/…`. `auth: 'token'` needs the short-lived document token core puts in pages (`ctx.transform` + `docToken()`); `'none'` is for public, secret-free assets. The handler gets parsed JSON and returns `{json}` or `{type, body}`. Core answers CORS (opaque origin only, no credentials) itself. |
+| `ctx.serve({path, methods, auth, handler})` | A route under `/s/{slug}/_gr/…`. `auth: 'token'` needs the short-lived document token core puts in pages (`ctx.transform` + `docToken()`); `'none'` is for public, secret-free assets. The handler gets parsed JSON and returns `{json}` or `{type, body}`. Core answers CORS (opaque origin only, no credentials) itself. |
 | `ctx.mcp.tool(name, {description, inputSchema, perm}, handler)` | An MCP tool. Core resolves the credential and checks `perm` (`read`, `publish`, `db`, …) for the space before your handler runs; you never receive the credential. |
 | `ctx.on('version.created' \| 'space.deleted', fn)` | Events. Errors are logged, never fatal. |
 | `ctx.export(fn)` / `ctx.import(fn)` | Add files to both export zips; read them back on import. Core handles `settings.json`. |

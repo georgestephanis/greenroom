@@ -6,7 +6,7 @@ import { newId, now, randomToken, sha256hex, hmac, safeEqual, normEmail } from '
 
 const scrypt = promisify(crypto.scrypt);
 const N = 2 ** 15, R = 8, P = 1;
-export const SESSION_COOKIE = '__Host-fs_session';
+export const SESSION_COOKIE = '__Host-gr_session';
 // Used to burn equal time when the email is unknown.
 const DUMMY = '$scrypt$ln=15,r=8,p=1$AAAAAAAAAAAAAAAAAAAAAA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 
@@ -189,10 +189,10 @@ export class Auth {
 
   #token(token) {
     let row;
-    if (token.startsWith('fsa_') && token.length >= 16) {
+    if (token.startsWith('gra_') && token.length >= 16) {
       row = this.db.prepare("SELECT * FROM api_keys WHERE token_prefix = ? AND kind = 'agent_token' AND revoked_at IS NULL").get(token.slice(0, 12));
       if (row && !safeEqual(row.key_hash, sha256hex(token))) row = null;
-    } else if (token.startsWith('fso_')) {
+    } else if (token.startsWith('gro_')) {
       // OAuth access token: opaque, stored hashed, one indexed lookup; the grant row carries the scope.
       row = this.db.prepare(
         "SELECT k.* FROM oauth_tokens t JOIN api_keys k ON k.id = t.grant_id WHERE t.token_hash = ? AND t.kind = 'access' AND t.expires_at > ? AND k.revoked_at IS NULL",

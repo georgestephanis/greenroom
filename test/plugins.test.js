@@ -60,7 +60,7 @@ test('loader: a plugin sees a narrow ctx, never core tables or credentials', asy
     name: 'spy', version: '1.0.0', description: 'test', spaceSettings: {},
     register(ctx) {
       seen = ctx;
-      ctx.serve({ path: '/_fs/who', auth: 'token', handler: (req) => ({ json: { keys: Object.keys(req).sort() } }) });
+      ctx.serve({ path: '/_gr/who', auth: 'token', handler: (req) => ({ json: { keys: Object.keys(req).sort() } }) });
       ctx.mcp.tool('spy_args', { description: 'test', inputSchema: { type: 'object', properties: {} }, perm: 'read' }, (a) => ({ keys: Object.keys(a).sort() }));
     },
   });
@@ -78,7 +78,7 @@ test('loader: a plugin sees a narrow ctx, never core tables or credentials', asy
   const tokenValue = /greenroom-doc-token" content="([^"]+)"/.exec(html);
   assert.equal(tokenValue, null, 'a plugin without the sqlite transform gets no doc token for free');
   // The route handler is handed the request data only, no credential and no db.
-  const r = await fetch(t.base + '/s/demo/_fs/who', { headers: { 'sec-fetch-site': 'same-origin' } });
+  const r = await fetch(t.base + '/s/demo/_gr/who', { headers: { 'sec-fetch-site': 'same-origin' } });
   assert.equal(r.status, 401, 'token routes need the doc token');
   // A tool handler gets the call's data, not core objects (the plugin's own ctx has the narrow CAS).
   assert.deepEqual(sc(await mcp(t, await token(admin, ['read']), 'spy_args', { slug: 'demo' })).keys, ['args', 'dir', 'settings', 'space']);
@@ -87,17 +87,17 @@ test('loader: a plugin sees a narrow ctx, never core tables or credentials', asy
 test('loader: cookies a plugin route sets are renamed and scoped to the space (rule 5)', async (x) => {
   const jar = definePlugin({
     name: 'jar', register(ctx) {
-      ctx.serve({ path: '/_fs/jar', auth: 'none', handler: () => ({ json: {}, cookies: ['pref=dark; Path=/; Domain=evil.test; SameSite=Lax; Max-Age=60', 'fs_session=stolen', '__Host-x=1'], headers: { 'set-cookie': 'raw=1' } }) });
+      ctx.serve({ path: '/_gr/jar', auth: 'none', handler: () => ({ json: {}, cookies: ['pref=dark; Path=/; Domain=evil.test; SameSite=Lax; Max-Age=60', 'gr_session=stolen', '__Host-x=1'], headers: { 'set-cookie': 'raw=1' } }) });
     },
   });
   const { t, admin } = await world(x, { enable: [], on: [], overrides: { plugins: [jar] } });
   await admin.post('/api/admin/plugins/jar', { enabled: true });
   await admin.post('/api/spaces/demo/plugins/jar', { enabled: true }, 'PUT');
   await admin.post('/api/spaces/demo', { privacy: 'public' }, 'PATCH');
-  const r = await fetch(t.base + '/s/demo/_fs/jar');
+  const r = await fetch(t.base + '/s/demo/_gr/jar');
   assert.equal(r.status, 200);
   const sp = t.store.space('demo');
-  assert.deepEqual(r.headers.getSetCookie(), [`fsp_${sp.id.slice(4, 12)}_pref=dark; Path=/s/demo/; Secure; SameSite=None; Max-Age=60`]);
+  assert.deepEqual(r.headers.getSetCookie(), [`grp_${sp.id.slice(4, 12)}_pref=dark; Path=/s/demo/; Secure; SameSite=None; Max-Age=60`]);
 });
 
 test('loader: a space that lists a plugin this instance lacks keeps its data and says so', async (x) => {
@@ -159,7 +159,7 @@ test('watermark: the link label and the template are HTML-escaped', async (x) =>
 // ------------------------------------------------------------------ sqlite
 
 const docToken = async (c) => /greenroom-doc-token" content="([^"]+)"/.exec(await (await c.fetch('/s/demo/', { headers: DOC })).text())?.[1];
-const api = (t, tok, body, method = 'POST') => fetch(t.base + '/s/demo/_fs/db', { method, headers: { 'content-type': 'application/json', ...(tok && { 'x-fs-doc-token': tok }) }, body: JSON.stringify(body) });
+const api = (t, tok, body, method = 'POST') => fetch(t.base + '/s/demo/_gr/db', { method, headers: { 'content-type': 'application/json', ...(tok && { 'x-gr-doc-token': tok }) }, body: JSON.stringify(body) });
 
 test('sqlite: MCP creates the database; the browser API obeys the per-table policy and the doc token', async (x) => {
   const { t, admin } = await world(x);
@@ -210,8 +210,8 @@ test('sqlite: the doc token is bound to the viewer, re-checked on every call', a
   assert.equal(await tables(lt2), 401, 'team-only now');
 
   // `none` routes answer only viewers of a non-public space
-  assert.equal((await fetch(t.base + '/s/demo/_fs/db.js')).status, 401, 'anonymous on a team-only space');
-  assert.equal((await admin.fetch('/s/demo/_fs/db.js')).status, 200, 'team member');
+  assert.equal((await fetch(t.base + '/s/demo/_gr/db.js')).status, 401, 'anonymous on a team-only space');
+  assert.equal((await admin.fetch('/s/demo/_gr/db.js')).status, 200, 'team member');
 
   // a team member's token dies with their session
   const tt = await docToken(admin);

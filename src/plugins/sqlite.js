@@ -169,15 +169,15 @@ export default definePlugin({
     keep: { type: 'number', min: 1, max: 100, default: 10, label: 'Snapshots to keep' },
   },
   register(ctx) {
-    // Rule 7: documents of spaces with this plugin carry a short-lived token in a <meta>; /_fs/db needs it.
+    // Rule 7: documents of spaces with this plugin carry a short-lived token in a <meta>; /_gr/db needs it.
     ctx.transform(({ html, docToken }) => injectDocToken(html, docToken()));
 
     ctx.serve({
-      path: '/_fs/db.js', auth: 'none',
+      path: '/_gr/db.js', auth: 'none',
       handler: () => ({ type: 'text/javascript; charset=utf-8', body: CLIENT }), // carries no secret
     });
     ctx.serve({
-      path: '/_fs/db', methods: ['POST'], auth: 'token',
+      path: '/_gr/db', methods: ['POST'], auth: 'token',
       handler: ({ body, settings, dir }) => ({ json: structured(dir, settings.tables, body) }),
     });
 
@@ -299,13 +299,13 @@ async function readBuf(stream, cap) {
   return Buffer.concat(chunks);
 }
 
-// What pages load as <script src="/s/{slug}/_fs/db.js">. It reads the token from the <meta> tag core
+// What pages load as <script src="/s/{slug}/_gr/db.js">. It reads the token from the <meta> tag core
 // injected into this very document; nothing secret is in this file.
 const CLIENT = `(() => {
   const url = document.currentScript.src.replace(/db\\.js(\\?.*)?$/, 'db');
   const call = async (body) => {
     const token = document.querySelector('meta[name="greenroom-doc-token"]')?.content;
-    const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-fs-doc-token': token || '' }, body: JSON.stringify(body) });
+    const r = await fetch(url, { method: 'POST', headers: { 'content-type': 'application/json', 'x-gr-doc-token': token || '' }, body: JSON.stringify(body) });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || 'Request failed (' + r.status + ')');
     return j;

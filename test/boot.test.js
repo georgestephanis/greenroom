@@ -6,7 +6,7 @@ import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 
 test('boots with a 256 MB heap cap and stays far under a 1 GB budget', async (x) => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-boot-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gr-boot-'));
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child = spawn(process.execPath, ['--max-old-space-size=256', path.resolve('bin/greenroom.js'), 'serve'], {
     env: { ...process.env, GREENROOM_DATA_DIR: dir, PORT: String(port) }, stdio: ['ignore', 'pipe', 'inherit'],

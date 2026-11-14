@@ -56,9 +56,9 @@ export function createPlugins({ store, config, installed = [] }) {
     const name = def.name;
     const ctx = {
       name,
-      /** Route under /s/{slug}/_fs/...; `auth` is 'token' (per-document token, rule 7) or 'none' (public, static). */
+      /** Route under /s/{slug}/_gr/...; `auth` is 'token' (per-document token, rule 7) or 'none' (public, static). */
       serve({ path: route, methods = ['GET'], auth = 'token', handler }) {
-        if (!/^\/_fs\/[\w.-]+$/.test(route) || !['token', 'none'].includes(auth)) throw new Error(`bad route: ${route}`);
+        if (!/^\/_gr\/[\w.-]+$/.test(route) || !['token', 'none'].includes(auth)) throw new Error(`bad route: ${route}`);
         p.routes.push({ path: route, methods, auth, handler, plugin: name });
       },
       /** Rewrite HTML documents at serve time. Receives { space, html, viewer, settings, docToken }. */

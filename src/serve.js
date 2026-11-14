@@ -96,7 +96,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
   const liveViewer = (space, v) => (v?.kind === 'team' && !!auth.sessionUser(v.subject))
     || (v?.kind === 'link' && store.linkLive(space, store.link(space, v.subject)));
 
-  // A plugin route under /_fs/. Core has already set the sandbox headers; here it checks the credential
+  // A plugin route under /_gr/. Core has already set the sandbox headers; here it checks the credential
   // (a per-document token, rule 7), runs the handler, and filters what comes back (rules 2 and 5).
   async function pluginRoute(req, res, url, space, route) {
     const token = route.auth === 'token';
@@ -104,7 +104,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
       // Sandboxed frames have an opaque origin and send no cookies: the token is the only credential,
       // so the CORS allowance carries no credentials and cannot be set by a plugin.
       res.setHeader('Access-Control-Allow-Origin', 'null');
-      res.setHeader('Access-Control-Allow-Headers', 'content-type, x-fs-doc-token');
+      res.setHeader('Access-Control-Allow-Headers', 'content-type, x-gr-doc-token');
       res.setHeader('Access-Control-Allow-Methods', route.methods.join(', '));
       res.setHeader('Vary', 'Cookie, Origin');
       if (req.method === 'OPTIONS') return send(res, 204, '', { 'Access-Control-Max-Age': '600' });
@@ -114,7 +114,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
     if (token) {
       // The token says who the document was served to; that viewer must still be allowed in right now
       // (a revoked link, a privacy change or a signed-out member ends access before the token expires).
-      const v = verifyDocToken(config.secret, space, req.headers['x-fs-doc-token']);
+      const v = verifyDocToken(config.secret, space, req.headers['x-gr-doc-token']);
       if (!v || !(space.privacy === 'public' || liveViewer(space, v))) return send(res, 401, 'Document token required', { 'Cache-Control': 'no-store' });
     } else if (space.privacy !== 'public') {
       const cookies = parseCookies(req.headers.cookie), s = auth.sessionFromCookie(cookies[SESSION_COOKIE]);
@@ -154,7 +154,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
     res.setHeader('Vary', 'Cookie');
 
     const brand = store.branding();
-    const route = space && m[2]?.startsWith('/_fs/') && plugins.route(space, m[2]);
+    const route = space && m[2]?.startsWith('/_gr/') && plugins.route(space, m[2]);
     if (route) return pluginRoute(req, res, url, space, route);
     const keyed = !!space && space.privacy !== 'public' && url.searchParams.has('key');
     if (method !== 'GET' && method !== 'HEAD' && !(keyed && method === 'POST')) return send(res, 405, 'Method not allowed', { Allow: 'GET, HEAD' });

@@ -12,7 +12,7 @@ import { sha256hex } from '../src/util.js';
 import { parseRedirectsFile } from '../src/routing.js';
 
 const f = (o) => Object.entries(o).map(([path, content]) => ({ path, content }));
-const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'fs-test-'));
+const tmp = () => fs.mkdtempSync(path.join(os.tmpdir(), 'gr-test-'));
 
 test('CAS: dedupes, verifies hash, gc keeps active blobs after the grace period', async () => {
   const d = tmp();
@@ -138,7 +138,7 @@ test('credentials: scopes fail closed; escalation needs a session; granter is li
   await admin.post('/api/spaces', { name: 'A', slug: 'a' });
   await admin.post('/api/spaces', { name: 'B', slug: 'b' });
   const uid = t.db.prepare('SELECT id FROM users').get().id;
-  const token = 'fsa_' + 'k'.repeat(40);
+  const token = 'gra_' + 'k'.repeat(40);
   t.db.prepare("INSERT INTO api_keys (id,user_id,name,key_hash,token_prefix,created_at,kind,scope_json) VALUES ('key_1',?,?,?,?,?,?,?)")
     .run(uid, 'agent', sha256hex(token), token.slice(0, 12), new Date().toISOString(), 'agent_token', JSON.stringify({ spaces: ['a'], create: false, perms: ['publish', 'read'], readOnly: false }));
   const agent = (p, body, method = 'POST') => fetch(t.base + p, { method, body: body && JSON.stringify(body), headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } });

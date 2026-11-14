@@ -29,7 +29,7 @@ test('_headers cannot set host-scoped headers', () => {
 });
 
 test('GC keeps a blob that a new write or a fresh version reuses', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-cas-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gr-cas-'));
   const cas = new CAS(path.join(dir, 'b'), path.join(dir, 't'));
   const old = new Date(Date.now() - 2 * 3600e3);
   const { sha256: a } = await cas.storeBuffer(Buffer.from('a'));
@@ -83,7 +83,7 @@ test('unauthenticated POSTs need same-origin Fetch Metadata or a same-host Origi
 });
 
 test('zip import caps the inflated total at maxSpaceBytes', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-zip-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gr-zip-'));
   const cas = new CAS(path.join(dir, 'b'), path.join(dir, 't'));
   const zip = path.join(dir, 'a.zip');
   fs.writeFileSync(zip, makeZip([{ name: 'a', data: 'x'.repeat(800), deflate: true }, { name: 'b', data: 'y'.repeat(800), deflate: true }]));
@@ -92,7 +92,7 @@ test('zip import caps the inflated total at maxSpaceBytes', async () => {
 });
 
 test('zip import stores an empty file', async () => {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'fs-zip-'));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'gr-zip-'));
   const cas = new CAS(path.join(dir, 'b'), path.join(dir, 't'));
   const zip = path.join(dir, 'a.zip');
   fs.writeFileSync(zip, makeZip([{ name: 'empty.txt', data: '' }, { name: 'index.html', data: 'hi' }]));
@@ -116,7 +116,7 @@ test('logout revokes the viewer cookies its session minted', async (x) => {
   const admin = await setupAdmin(t);
   await admin.post('/api/spaces', { name: 'Demo', slug: 'demo' });
   await admin.post('/api/spaces/demo/versions', { files: [{ path: 'index.html', content: 'hi' }] });
-  const vc = (await admin.fetch('/s/demo/', { headers: { 'sec-fetch-dest': 'document' } })).headers.getSetCookie().find((c) => c.startsWith('fsv_'));
+  const vc = (await admin.fetch('/s/demo/', { headers: { 'sec-fetch-dest': 'document' } })).headers.getSetCookie().find((c) => c.startsWith('grv_'));
   const viewer = client(t.base);
   const kv = vc.split(';')[0];
   viewer.jar.set(kv.slice(0, kv.indexOf('=')), kv.slice(kv.indexOf('=') + 1));

@@ -198,7 +198,7 @@ test('team members load team-only subresources; link spaces still admit members'
   assert.equal(d.status, 200);
   assert.match(d.headers.get('set-cookie'), /SameSite=None/);
   // Sandboxed subresource requests are cross-site: the Strict session cookie would not go, the viewer cookie does.
-  const viewer = [...admin.jar].find(([k]) => k.startsWith('fsv_'));
+  const viewer = [...admin.jar].find(([k]) => k.startsWith('grv_'));
   const r = await fetch(`${t.base}/s/beta/a.css`, { headers: { cookie: `${viewer[0]}=${viewer[1]}`, 'sec-fetch-site': 'cross-site' } });
   assert.equal(r.status, 200);
   await link('alpha');
@@ -350,7 +350,7 @@ test('a team viewer cookie stops working after logout or when the member is disa
   const { t, admin } = await world(x);
   const viewerOf = async (c) => {
     assert.equal((await c.fetch('/s/beta/', { headers: DOC })).status, 200);
-    const [k, v] = [...c.jar].find(([n]) => n.startsWith('fsv_'));
+    const [k, v] = [...c.jar].find(([n]) => n.startsWith('grv_'));
     return () => fetch(`${t.base}/s/beta/a.css`, { headers: { cookie: `${k}=${v}` } }).then((r) => r.status);
   };
   const adaView = await viewerOf(admin);

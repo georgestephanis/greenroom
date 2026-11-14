@@ -222,7 +222,7 @@ test('escalation is closed: OAuth and pasted tokens cannot make a space public, 
   try {
     const { access_token } = await connect(t, ada, { spaces: ['alpha'], perms: ['read', 'publish', 'share', 'db', 'export'], create: true });
     const minted = await form(ada, '/api/tokens', [['_csrf', ada.csrf], ['name', 'Deploy bot'], ['spaces', 'alpha'], ['perms', 'publish'], ['perms', 'read']]);
-    const fsa = /value="(fsa_[^"]+)"/.exec(await minted.text())[1];
+    const fsa = /value="(gra_[^"]+)"/.exec(await minted.text())[1];
     for (const token of [access_token, fsa]) {
       const h = { authorization: `Bearer ${token}`, 'content-type': 'application/json' };
       const req = (p, body, method = 'POST') => fetch(t.base + p, { method, headers: h, body: JSON.stringify(body) });
@@ -360,12 +360,12 @@ test('a refresh token presented by another client_id fails without spending it',
   } finally { t.close(); }
 });
 
-test('fsa_ tokens: the owner can revoke one; another non-admin member cannot', async () => {
+test('gra_ tokens: the owner can revoke one; another non-admin member cannot', async () => {
   const { t, ada } = await world();
   try {
     const mint = async () => {
       const r = await form(ada, '/api/tokens', [['_csrf', ada.csrf], ['name', 'bot'], ['spaces', 'alpha'], ['perms', 'read']]);
-      const fsa = /value="(fsa_[^"]+)"/.exec(await r.text())[1];
+      const fsa = /value="(gra_[^"]+)"/.exec(await r.text())[1];
       return { fsa, id: t.db.prepare("SELECT id FROM api_keys WHERE kind != 'oauth' ORDER BY rowid DESC").get().id };
     };
     const inv = (await (await ada.post('/api/invites', {})).json()).invite;

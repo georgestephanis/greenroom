@@ -35,7 +35,7 @@ Spaces share one origin with the dashboard, so isolation is enforced by headers,
 
 1. Every response under `/s/` carries `Content-Security-Policy: sandbox allow-scripts allow-forms allow-popups allow-modals allow-downloads`, so each page runs in an opaque origin (no `allow-same-origin`, no top navigation). Also `nosniff` and `Referrer-Policy: no-referrer`.
 2. `_headers` can't set CSP, `Set-Cookie`, `Service-Worker-Allowed`, `Cross-Origin-*` or `Access-Control-*`; they're dropped with a warning when the version is finalised.
-3. The dashboard session cookie is `__Host-fs_session; HttpOnly; Secure; SameSite=Strict`.
+3. The dashboard session cookie is `__Host-gr_session; HttpOnly; Secure; SameSite=Strict`.
 4. State-changing requests need a CSRF token and `Sec-Fetch-Site: same-origin`; `Origin: null` is refused. Bearer-token requests are exempt.
 5. Cookies set by plugins are rewritten to `Path=/s/{slug}/` with a per-space name prefix.
 6. Viewing a non-public space uses a viewer cookie bound by HMAC to that space's id. A cookie for one space is useless on another, and removing a member revokes access immediately.
@@ -60,7 +60,7 @@ Switching a space away from "Anyone with the link" pauses its links. When a pers
 
 The MCP endpoint is `POST /mcp` (Streamable HTTP, JSON responses). Tools: `list_spaces`, `get_space`, `create_space`, `publish`, `read_file`, `list_versions`, `diff_versions`, `rollback`, `create_share_link`, `revoke_share_link` (both need `share`; creating a link switches a team-only space to "Anyone with the link" and says so in a `note`; it fails on a Public space). `export_space` (needs `export`; returns a download link valid for 10 minutes, bound to that space and that credential, and dead if either is revoked or deleted).
 
-Every way in — dashboard session, OAuth access token, pasted `fsa_` token — resolves to one credential object before any route runs, and every check reads only that.
+Every way in — dashboard session, OAuth access token, pasted `gra_` token — resolves to one credential object before any route runs, and every check reads only that.
 
 - **Discovery.** An unauthenticated `/mcp` call gets `401` with `WWW-Authenticate: Bearer resource_metadata=…` (RFC 9728), which points at `/.well-known/oauth-authorization-server` (RFC 8414).
 - **Clients** identify themselves with a Client ID Metadata Document: `client_id` is an https URL whose JSON lists its name and redirect URIs. It is fetched with public addresses only (checked at connect time, so DNS rebinding can't reach private ranges), no redirects, 64 KB and 5 s limits. Dynamic client registration is off unless an admin turns it on (Instance page).

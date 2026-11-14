@@ -178,7 +178,7 @@ test('offboarding: deactivation stops session and API key at once; last-admin gu
     assert.equal((await ada.post(`/api/users/${t.db.prepare('SELECT id FROM users').get().id}/deactivate`, {})).status, 400, 'last active admin');
     const bob = await invite(t, ada, 'bob@example.com');
     const minted = await bob.fetch('/api/tokens', { method: 'POST', body: new URLSearchParams({ _csrf: bob.csrf, name: 'k', perms: 'read' }), headers: { 'content-type': 'application/x-www-form-urlencoded' } });
-    const key = /value="(fsa_[^"]+)"/.exec(await minted.text())[1];
+    const key = /value="(gra_[^"]+)"/.exec(await minted.text())[1];
     const asKey = () => fetch(t.base + '/api/me', { headers: { authorization: `Bearer ${key}` } });
     assert.equal((await asKey()).status, 200);
     assert.equal((await ada.post(`/api/users/${bob.id}/deactivate`, {})).status, 200);
@@ -208,7 +208,7 @@ test('re-confirmation: an overdue account stops working until the emailed link i
     assert.equal((await ada.post('/api/admin/smtp', smtpFor(mail.port))).status, 200);
     const bob = await invite(t, ada, 'bob@example.com');
     const minted = await bob.fetch('/api/tokens', { method: 'POST', body: new URLSearchParams({ _csrf: bob.csrf, name: 'k', perms: 'read' }), headers: { 'content-type': 'application/x-www-form-urlencoded' } });
-    const key = /value="(fsa_[^"]+)"/.exec(await minted.text())[1];
+    const key = /value="(gra_[^"]+)"/.exec(await minted.text())[1];
     const asKey = () => fetch(t.base + '/api/me', { headers: { authorization: `Bearer ${key}` } });
     assert.equal((await ada.post('/api/admin/reconfirm', { days: 30 })).status, 200);
     assert.equal((await bob.fetch('/api/me')).status, 200, 'everyone gets the full grace period when it is turned on');
