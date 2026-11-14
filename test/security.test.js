@@ -135,3 +135,70 @@ test('rule 8: preview iframe is sandboxed without allow-same-origin', async (x) 
   assert.equal(m[1], PREVIEW_SANDBOX);
   assert.doesNotMatch(m[1], /allow-same-origin/);
 });
+
+test('rule 1: CSP on 304, 416, 400, team 302/401, HEAD and 500', async (x) => {
+  const t = await boot(); x.after(t.close);
+  const admin = await withSpace(t, 'team', { 'index.html': 'hi', 'a.css': 'x{}' });
+  const anon = client(t.base);
+  const etag = (await admin.fetch('/s/demo/a.css')).headers.get('etag');
+  const cases = [
+    [admin, '/s/demo/a.css', 304, { headers: { 'if-none-match': etag } }],
+    [admin, '/s/demo/a.css', 416, { headers: { range: 'bytes=99-' } }],
+    [admin, '/s/demo/%E0%A4%A', 400],
+    [anon, '/s/demo/', 302, { headers: { 'sec-fetch-dest': 'document' } }],
+    [anon, '/s/demo/a.css', 401],
+    [admin, '/s/demo/a.css', 200, { method: 'HEAD' }],
+  ];
+  for (const [c, p, status, init] of cases) {
+    const r = await c.fetch(p, init);
+    assert.equal(r.status, status, p);
+    assert.equal(r.headers.get('content-security-policy'), SPACE_CSP, `${status} ${p}`);
+  }
+  t.db.prepare("UPDATE versions SET routing_json = '{'").run(); // force an internal error
+  const r = await admin.fetch('/s/demo/a.css');
+  assert.equal(r.status, 500);
+  assert.equal(r.headers.get('content-security-policy'), SPACE_CSP);
+});
+
+test('rule 2: host-scoped headers from _headers never reach a response', async (x) => {
+  const t = await boot(); x.after(t.close);
+  await withSpace(t, 'public', { 'index.html': 'hi', '_headers': '/*\n  Strict-Transport-Security: max-age=0\n  Clear-Site-Data: "*"\n  Set-Login: logged-out\n  Permissions-Policy: camera=*\n' });
+  const r = await client(t.base).fetch('/s/demo/');
+  for (const h of ['strict-transport-security', 'clear-site-data', 'set-login', 'permissions-policy']) assert.equal(r.headers.get(h), null, h);
+});
+
+test('rule 4: unauthenticated writes are refused; logout is not a GET', async (x) => {
+  const t = await boot(); x.after(t.close);
+  const admin = await withSpace(t);
+  const anon = client(t.base);
+  assert.equal((await anon.json('/api/spaces', { name: 'x' })).status, 401);
+  assert.equal((await anon.fetch('/api/spaces/demo/versions', { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).status, 401);
+  assert.equal((await anon.fetch('/api/spaces/demo/upload', { method: 'POST', body: 'x', headers: { 'content-type': 'application/zip' } })).status, 401);
+  assert.notEqual((await admin.fetch('/api/logout')).status, 200);
+  assert.equal((await admin.fetch('/api/me')).status, 200); // GET left the session alive
+});
+
+test('rule 6: a viewer cookie for space A is rejected on space B over HTTP', async (x) => {
+  const t = await boot(); x.after(t.close);
+  const admin = await withSpace(t, 'team', { 'index.html': 'a' }, 'a');
+  await admin.post('/api/spaces', { name: 'B', slug: 'b' });
+  await admin.post('/api/spaces/b/versions', { files: files({ 'index.html': 'b' }) });
+  const vc = (await admin.fetch('/s/a/', { headers: { 'sec-fetch-dest': 'document' } })).headers.getSetCookie().find((c) => c.startsWith('fsv_'));
+  const value = vc.split(';')[0].split('=')[1];
+  const bId = t.db.prepare("SELECT id FROM spaces WHERE slug = 'b'").get().id;
+  const thief = client(t.base);
+  thief.jar.set(`fsv_${bId.slice(4, 12)}`, value);
+  assert.equal((await thief.fetch('/s/b/')).status, 401);
+});
+
+test('rule 7: the doc token goes only to documents (Sec-Fetch-Dest), never to other requests', async (x) => {
+  const t = await boot(); x.after(t.close);
+  await withSpace(t, 'public', { 'index.html': '<head></head>hi', 'a.css': 'x{}' });
+  t.db.prepare(`UPDATE spaces SET plugins_json = '["sqlite"]'`).run();
+  const c = client(t.base);
+  const body = async (p, dest) => (await c.fetch(p, { headers: dest ? { 'sec-fetch-dest': dest } : {} })).text();
+  assert.match(await body('/s/demo/', 'document'), /freespace-doc-token/);
+  for (const [p, dest] of [['/s/demo/', 'empty'], ['/s/demo/', 'script'], ['/s/demo/', undefined], ['/s/demo/a.css', 'document']]) {
+    assert.doesNotMatch(await body(p, dest), /freespace-doc-token/, `${p} ${dest}`);
+  }
+});
