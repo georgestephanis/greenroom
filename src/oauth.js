@@ -173,7 +173,7 @@ export class OAuth {
   register(body) {
     if (!this.dcrEnabled()) throw oauthErr(403, 'access_denied', 'Dynamic client registration is disabled on this instance');
     const uris = body.redirect_uris;
-    if (!Array.isArray(uris) || !uris.length || !uris.every((u) => { try { return ['https:', 'http:'].includes(new URL(u).protocol) || /^[a-z][a-z0-9+.-]*:/.test(u); } catch { return false; } })) {
+    if (!Array.isArray(uris) || !uris.length || !uris.every((u) => { try { const x = new URL(u); return x.protocol === 'https:' || (x.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(x.hostname)); } catch { return false; } })) {
       throw oauthErr(400, 'invalid_redirect_uri');
     }
     const id = newId('dcr', 24), name = String(body.client_name || 'Unnamed client').slice(0, 80);

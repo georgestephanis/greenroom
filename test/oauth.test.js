@@ -76,12 +76,15 @@ test('discovery: /mcp 401 points at RFC 9728 metadata, which points at RFC 8414 
 test('DCR is off by default; only an admin session can turn it on', async () => {
   const { t, ada } = await world();
   try {
-    const reg = () => fetch(t.base + '/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'X', redirect_uris: ['https://x.example/cb'] }) });
+    const reg = (uri = 'https://x.example/cb') => fetch(t.base + '/oauth/register', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ client_name: 'X', redirect_uris: [uri] }) });
     assert.equal((await reg()).status, 403);
     const { access_token } = await connect(t, ada, { perms: ['read', 'publish'] });
     assert.equal((await fetch(t.base + '/api/admin/dcr', { method: 'POST', headers: { authorization: `Bearer ${access_token}`, 'content-type': 'application/json' }, body: '{"enabled":true}' })).status, 403);
     assert.equal((await ada.post('/api/admin/dcr', { enabled: true })).status, 200);
     assert.equal((await reg()).status, 201);
+    // https, or http on loopback only.
+    for (const u of ['http://127.0.0.1:3000/cb', 'http://localhost/cb', 'http://[::1]:9/cb']) assert.equal((await reg(u)).status, 201, u);
+    for (const u of ['http://x.example/cb', 'myapp://cb', 'javascript:alert(1)']) assert.equal((await (await reg(u)).json()).error, 'invalid_redirect_uri', u);
   } finally { t.close(); }
 });
 
