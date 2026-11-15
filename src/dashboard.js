@@ -26,6 +26,7 @@ export function authPage(title, cred, error, fields, action, button, extra = '')
 }
 const field = (name, label, type = 'text', attrs = '') => `<label>${esc(label)}<input name="${name}" type="${type}" ${attrs} required></label>`;
 export const loginFields = field('email', 'Email', 'email', 'autocomplete="username"') + field('password', 'Password', 'password', 'autocomplete="current-password"');
+export const resetFields = field('password', 'New password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
 export const setupFields = field('name', 'Your name', 'text', 'autocomplete="name"') + field('email', 'Email', 'email', 'autocomplete="username"') + field('password', 'Password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
 
 export function spacesPage(cred, spaces) {
@@ -61,8 +62,14 @@ ${warnings.length ? `<section class="card warn"><h2>Warnings on the live version
 <button>Save</button></form><small>Team members can always view. Switching away from “Anyone with the link” pauses its links; switching back restores them. A link created while the space is team-only switches it to “Anyone with the link”; links paused earlier stay paused until you resume them.</small></section>
 ${links ? sharing(cred, space, links) : ''}
 ${pluginsCard(cred, space, plugins)}
-<section class="card"><h2>History</h2><ol class="history">${hist || '<li>No versions.</li>'}</ol></section>`);
+<section class="card"><h2>History</h2><ol class="history">${hist || '<li>No versions.</li>'}</ol></section>
+<section class="card" id="settings"><h2>Settings</h2><form method="post" action="/api/spaces/${esc(space.slug)}">${hidden(cred)}<input type="hidden" name="_method" value="PATCH">
+<label>Name <input name="name" value="${esc(space.name)}" required maxlength="200"></label><label>Slug <input name="slug" value="${esc(space.slug)}" required pattern="[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?" title="Lowercase letters, digits and dashes"></label>
+<button>Save</button></form><small>Changing the slug changes the space's URL. Old links to <code>/s/${esc(space.slug)}/</code> stop working.</small>
+<form method="post" action="/api/spaces/${esc(space.slug)}" data-confirm="Delete “${esc(space.name)}” and all its versions? This cannot be undone.">${hidden(cred)}<input type="hidden" name="_method" value="DELETE"><h3>Delete this space</h3>
+<p><small>Removes every version and share link. Export it first if you might want it back.</small></p><button data-danger>Delete space</button></form></section>`);
 }
+
 
 export function diffPage(cred, space, d, texts) {
   const list = (title, items, f) => (items.length ? `<h3>${title}</h3><ul>${items.map(f).join('')}</ul>` : '');
@@ -94,13 +101,15 @@ ${field('current', 'Current password', 'password', 'autocomplete="current-passwo
 }
 
 export function teamPage(cred, users, invites, created) {
+  const post = (path, label, extra = '') => `<form method="post" action="${path}" class="inline">${hidden(cred)}<button class="link"${extra}>${label}</button></form>`;
+  const role = (u) => `<form method="post" action="/api/users/${esc(u.id)}/role" class="inline">${hidden(cred)}<select name="role" onchange="this.form.requestSubmit()" aria-label="Role for ${esc(u.display_name)}">${['member', 'admin'].map((r) => `<option${u.role === r ? ' selected' : ''}>${r}</option>`).join('')}</select><noscript><button class="link">Save</button></noscript></form>`;
   return layout('Team', cred, `<h1>Team</h1>
 ${created ? `<section class="card ok"><p>Invite link (shown once, valid 7 days):</p><input readonly class="wide" value="${esc(created)}"></section>` : ''}
-<table><thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.display_name)}<br><small>${esc(u.username)}</small></td><td>${esc(u.role)}${u.disabled_at ? ' <strong>(deactivated)</strong>' : u.lapsed ? ' <strong>(lapsed)</strong>' : ''}</td><td>${fmtTime(u.last_login_at)}</td>
-<td><form method="post" action="/api/users/${esc(u.id)}/${u.disabled_at ? 'reactivate' : 'deactivate'}" class="inline">${hidden(cred)}<button class="link"${u.disabled_at ? '' : ' data-danger'}>${u.disabled_at ? 'Reactivate' : 'Deactivate'}</button></form></td></tr>`).join('')}</tbody></table>
+<table><thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.display_name)}<br><small>${esc(u.username)}</small></td><td>${u.disabled_at ? esc(u.role) : role(u)}${u.disabled_at ? ' <strong>(deactivated)</strong>' : u.lapsed ? ' <strong>(lapsed)</strong>' : ''}</td><td>${fmtTime(u.last_login_at)}</td>
+<td>${u.disabled_at ? '' : `${post(`/api/users/${esc(u.id)}/reset`, 'Reset password')} `}${post(`/api/users/${esc(u.id)}/${u.disabled_at ? 'reactivate' : 'deactivate'}`, u.disabled_at ? 'Reactivate' : 'Deactivate', u.disabled_at ? '' : ' data-danger')}</td></tr>`).join('')}</tbody></table>
 <section class="card"><h2>Invite someone</h2><form method="post" action="/api/invites">${hidden(cred)}<input type="hidden" name="_next" value="__invite__">
 <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label><button>Create invite link</button></form>
-<small>${invites} unused invite(s) outstanding.</small></section>`);
+${invites.length ? `<h3>Open invites</h3><table><thead><tr><th>Role</th><th>Created by</th><th>Expires</th><th></th></tr></thead><tbody>${invites.map((i) => `<tr><td>${esc(i.role)}</td><td>${esc(i.creator)}<br><small>${fmtTime(i.created_at)}</small></td><td>${fmtTime(i.expires_at)}</td><td>${post(`/api/invites/${esc(i.id)}/revoke`, 'Revoke', ' data-danger')}</td></tr>`).join('')}</tbody></table>` : '<small>No open invites.</small>'}</section>`);
 }
 
 function sharing(cred, space, links) {
@@ -221,7 +230,7 @@ ${list || '<p>Nothing connected yet.</p>'}
 <form method="post" action="/api/tokens">${hidden(cred)}<input type="hidden" name="_next" value="/access"><label>Label (shown in history)<input name="name" required></label>${scopeFields(spaces)}<button>Create token</button></form></section>`);
 }
 
-export const shownOnce = (cred, { title, value, back }) => layout(title, cred, `<h1>${esc(title)}</h1><section class="card ok"><p>Copy it now; it is shown once.</p><input readonly class="wide" value="${esc(value)}"></section><p><a href="${esc(back)}">Back</a></p>`);
+export const shownOnce = (cred, { title, value, back, note }) => layout(title, cred, `<h1>${esc(title)}</h1><section class="card ok"><p>Copy it now; it is shown once.${note ? ` ${esc(note)}` : ''}</p><input readonly class="wide" value="${esc(value)}"></section><p><a href="${esc(back)}">Back</a></p>`);
 
 export const notFoundPage = (cred) => layout('Not found', cred, '<h1>Not found</h1><p><a href="/">Back to spaces</a></p>');
 
@@ -258,6 +267,12 @@ export const APP_JS = `
     if (isNaN(d)) continue;
     el.title = el.textContent;
     el.textContent = d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+  }
+  for (const f of document.querySelectorAll('form[data-confirm]')) f.addEventListener('submit', (e) => { if (!confirm(f.dataset.confirm)) e.preventDefault(); });
+  for (const input of document.querySelectorAll('input[readonly].wide')) {
+    const b = document.createElement('button'); b.type = 'button'; b.textContent = 'Copy';
+    b.addEventListener('click', async () => { await navigator.clipboard.writeText(input.value); b.textContent = 'Copied'; });
+    input.after(b);
   }
   // Expiry: the Custom option needs JS, since datetime-local has no timezone; it is sent as UTC ISO.
   for (const sel of document.querySelectorAll('select[data-expiry]')) {
@@ -306,7 +321,7 @@ button{cursor:pointer;display:inline-flex;align-items:center;gap:.4rem;margin-to
 button:hover{filter:brightness(1.08)}button:active{filter:brightness(.95)}
 button.link{background:none;border:0;color:var(--accent);padding:0;margin:0;font-weight:500;text-decoration:underline;text-underline-offset:2px}
 td button.link,.history button.link{font-size:.88rem}
-button.link[data-danger]{color:var(--bad)}
+button.link[data-danger]{color:var(--bad)}button[data-danger]:not(.link){background:var(--bad);border-color:var(--bad);color:#fff}
 .inline{display:inline}.inline+.inline{margin-left:.5rem}
 .preview{display:block;width:100%;height:28rem;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow)}
 .badge{display:inline-block;font-size:.72rem;font-weight:600;line-height:1.5;border-radius:99px;padding:.05rem .55rem;background:var(--bg);border:1px solid var(--line);color:var(--mut);vertical-align:1px;white-space:nowrap}

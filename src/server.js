@@ -65,6 +65,7 @@ export function createApp(overrides = {}) {
   const people = new People({ db, auth, store, config, throttle: attempt });
   const handleSpace = createSpaceHandler({ store, auth, config, clientIp, plugins, throttle: { hit: attempt, clear: (k) => attempts.delete(k) } });
   const origin = (req) => oauth.issuer(req);
+  const openInvites = () => db.prepare('SELECT i.*, u.display_name AS creator FROM invites i JOIN users u ON u.id = i.created_by WHERE i.used_at IS NULL AND i.expires_at > ? ORDER BY i.created_at DESC').all(now());
   const teamUsers = () => db.prepare('SELECT * FROM users ORDER BY created_at').all().map((u) => ({ ...u, lapsed: !u.disabled_at && auth.lapsed(u) }));
   const pubLink = (req, space, g) => ({
     id: g.id, label: g.name, url: g.key ? `${origin(req)}/s/${space.slug}/?key=${g.key}` : null, hint: g.token_hint, password: !!g.secret_hash,
@@ -152,6 +153,10 @@ export function createApp(overrides = {}) {
       res.setHeader('Set-Cookie', sessionCookie(auth.createSession(u.id, { userAgent: req.headers['user-agent'], ip })));
       return { status: 201, body: { ok: true }, next: '/' };
     }
+    if (a === 'reset' && m === 'POST') {
+      await people.completeReset({ token: body.token, password: body.password });
+      return { status: 200, body: { ok: true }, next: '/login?reset=1' };
+    }
     if (a === 'confirm' && m === 'POST') {
       people.confirm(body.token);
       return { status: 200, body: { ok: true }, next: '/login?confirmed=1' };
@@ -183,12 +188,37 @@ export function createApp(overrides = {}) {
     if (a === 'me') return { status: 200, body: { user: { id: cred.userId, email: cred.user.username, role: cred.user.role }, credential: cred.type, scope: cred.scope } };
 
     // Escalation set: needs a person's own session (requireSession), never a scoped credential.
-    if (a === 'invites' && m === 'POST') {
+    if (a === 'invites' && !b && m === 'POST') {
       requireAdmin(cred);
       const token = randomToken(24);
       db.prepare('INSERT INTO invites (id,token_hash,role,created_by,created_at,expires_at) VALUES (?,?,?,?,?,?)').run(
         newId('inv'), sha256hex(token), body.role === 'admin' ? 'admin' : 'member', cred.userId, now(), new Date(Date.now() + 7 * 864e5).toISOString());
       return { status: 201, body: { invite: `${config.publicUrl || `https://${req.headers.host}`}/invite/${token}` }, invite: true };
+    }
+    if (a === 'invites' && b && c === 'revoke' && m === 'POST') {
+      requireAdmin(cred);
+      db.prepare('UPDATE invites SET used_at = COALESCE(used_at, ?) WHERE id = ?').run(now(), b);
+      store.log(cred, 'invite.revoked', null, { invite: b });
+      return { status: 200, body: { ok: true }, next: '/team' };
+    }
+    if (a === 'users' && (c === 'reset' || c === 'role') && m === 'POST') {
+      requireAdmin(cred);
+      const u = db.prepare('SELECT * FROM users WHERE id = ?').get(b);
+      if (!u) throw httpErr(404, 'No such user');
+      if (c === 'reset') {
+        if (u.disabled_at) throw httpErr(400, 'Reactivate them first');
+        const link = `${config.publicUrl || `https://${req.headers.host}`}/reset/${people.resetLink(u)}`;
+        store.log(cred, 'user.reset_link', null, { user: b });
+        return { status: 201, body: { link }, shownOnce: { title: `Password reset link for ${u.display_name}`, value: link, note: 'Valid 24 hours, works once, and signs them out everywhere. Send it to them yourself.', back: '/team' } };
+      }
+      const role = body.role === 'admin' ? 'admin' : 'member';
+      if (u.role === 'admin' && role === 'member') {
+        const others = db.prepare("SELECT id FROM users WHERE role = 'admin' AND disabled_at IS NULL AND id != ?").all(b);
+        if (!others.some((o) => auth.activeUser(o.id))) throw httpErr(400, 'The last active admin cannot be made a member');
+      }
+      db.prepare('UPDATE users SET role = ?, updated_at = ? WHERE id = ?').run(role, now(), b);
+      store.log(cred, 'user.role', null, { user: b, role });
+      return { status: 200, body: { ok: true }, next: b === cred.userId && role === 'member' ? '/' : '/team' };
     }
     // Offboarding: Auth.activeUser is the live granter check behind every credential (session, pasted key,
     // OAuth access and refresh), so setting disabled_at stops them all at once. Nothing they made is deleted.
@@ -294,7 +324,8 @@ export function createApp(overrides = {}) {
               else if (!can(cred, 'share', space.slug)) throw httpErr(403, 'Your credential cannot change sharing here');
               patch.privacy = body.privacy;
             }
-            return { status: 200, body: { space: pubSpace(store.updateSpace(cred, space, patch)) }, next: `/spaces/${space.slug}` };
+            const updated = store.updateSpace(cred, space, patch);
+            return { status: 200, body: { space: pubSpace(updated) }, next: `/spaces/${updated.slug}` };
           }
           if (m === 'DELETE') { requireSession(cred); store.deleteSpace(cred, space); return { status: 200, body: { ok: true }, next: '/' }; }
         }
@@ -392,11 +423,13 @@ export function createApp(overrides = {}) {
     const p = url.pathname;
     if (p === '/assets/app.js') { res.setHeader('Content-Type', 'text/javascript'); return res.end(ui.APP_JS); }
     if (p === '/assets/app.css') { res.setHeader('Content-Type', 'text/css'); return res.end(ui.APP_CSS); }
-    if (p === '/login') return cred ? redirect(res, '/', 302) : html(res, 200, ui.authPage('Sign in', null, url.searchParams.get('error'), ui.loginFields + (people.signupOpen() ? '<p><small>New here? <a href="/signup">Sign up with your work email</a></small></p>' : ''), '/api/login', 'Sign in', `${url.searchParams.get('confirmed') ? '<p class="ok">Email confirmed. Sign in to continue.</p>' : ''}<input type="hidden" name="_next" value="${esc2(safeNext(url.searchParams.get('next')))}">`));
+    if (p === '/login') return cred ? redirect(res, '/', 302) : html(res, 200, ui.authPage('Sign in', null, url.searchParams.get('error'), ui.loginFields + (people.signupOpen() ? '<p><small>New here? <a href="/signup">Sign up with your work email</a></small></p>' : ''), '/api/login', 'Sign in', `${url.searchParams.get('confirmed') ? '<p class="ok">Email confirmed. Sign in to continue.</p>' : url.searchParams.get('reset') ? '<p class="ok">Password set. Sign in with it.</p>' : ''}<input type="hidden" name="_next" value="${esc2(safeNext(url.searchParams.get('next')))}">`));
     if (p === '/setup') return auth.userCount() ? redirect(res, '/login', 302) : html(res, 200, ui.authPage('Set up greenroom', null, url.searchParams.get('error'), ui.setupFields, '/api/setup', 'Create admin account'));
     let m = /^\/invite\/([\w-]+)$/.exec(p);
     if (m) return html(res, 200, ui.authPage('Join the team', null, url.searchParams.get('error'), ui.setupFields, '/api/invites/accept', 'Join', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     if (p === '/signup') return people.signupOpen() ? html(res, 200, ui.signupPage(cred, url.searchParams.get('sent'), url.searchParams.get('error'))) : html(res, 404, ui.messagePage(null, 'Not available', 'Self-signup is not turned on here. Ask an admin for an invite.'));
+    m = /^\/reset\/([\w-]+)$/.exec(p);
+    if (m) return html(res, 200, ui.authPage('Choose a new password', null, url.searchParams.get('error') || (people.peek('reset', m[1]) ? null : 'This link is invalid or has expired'), ui.resetFields, '/api/reset', 'Set password', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     m = /^\/signup\/([\w-]+)$/.exec(p);
     if (m) return html(res, 200, ui.authPage('Create your account', cred, url.searchParams.get('error') || (people.peek('signup', m[1]) ? null : 'This link is invalid or has expired'), ui.signupFields, '/api/signup/complete', 'Create account', `<input type="hidden" name="token" value="${esc2(m[1])}">`));
     m = /^\/confirm\/([\w-]+)$/.exec(p); // a button, not a GET side effect, so mail scanners can't spend the link
@@ -435,7 +468,7 @@ export function createApp(overrides = {}) {
     }
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
     if (p === '/account') { requireSession(cred); return html(res, 200, ui.accountPage(cred, url.searchParams.get('saved'), url.searchParams.get('error'))); }
-    if (p === '/team') return html(res, 200, ui.teamPage(cred, teamUsers(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
+    if (p === '/team') return html(res, 200, ui.teamPage(cred, teamUsers(), openInvites()));
     if (p === '/instance/migrate') { requireAdmin(cred); return html(res, 200, ui.migratePage(cred, store.listSpaces(), jobView(migration), url.searchParams.get('error'))); }
     if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n) })), { ...people.view(), mailed: url.searchParams.get('mailed') })); }
     m = /^\/spaces\/([^/]+)\/export$/.exec(p);
@@ -558,7 +591,7 @@ export function createApp(overrides = {}) {
       if (isForm) {
         if (r.shownOnce) return html(res, 201, ui.shownOnce(cred, r.shownOnce));
         if (r.minted) return html(res, 201, ui.accessPage(cred, [], store.listSpaces(), r.minted));
-        if (r.invite) return html(res, 201, ui.teamPage(cred, teamUsers(), 1, r.body.invite));
+        if (r.invite) return html(res, 201, ui.teamPage(cred, teamUsers(), openInvites(), r.body.invite));
         return redirect(res, safeNext(r.next));
       }
       return json(res, r.status, r.body);

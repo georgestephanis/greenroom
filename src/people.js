@@ -8,6 +8,15 @@ import { normDomain, normEmail, now, randomToken, sha256hex } from './util.js';
 const LINK_TTL = 30 * 60e3;
 const SECURITY = ['tls', 'starttls', 'none'];
 
+/** Exported for the CLI's reset-link, which runs without a server (or SMTP). */
+export function mintToken(db, kind, email, userId = null, ttl = LINK_TTL) {
+  const token = randomToken(32);
+  db.prepare('INSERT INTO email_tokens (token_hash,kind,email,user_id,created_at,expires_at) VALUES (?,?,?,?,?,?)')
+    .run(sha256hex(token), kind, email, userId, now(), new Date(Date.now() + ttl).toISOString());
+  return token;
+}
+export const RESET_TTL = 24 * 3600e3;
+
 export class People {
   constructor({ db, auth, store, config, throttle, send = sendMail }) {
     Object.assign(this, { db, auth, store, config, throttle, send });
@@ -117,12 +126,7 @@ export class People {
     this.store.log(cred, 'reconfirm.settings', null, { days });
   }
 
-  #token(kind, email, userId = null) {
-    const token = randomToken(32);
-    this.db.prepare('INSERT INTO email_tokens (token_hash,kind,email,user_id,created_at,expires_at) VALUES (?,?,?,?,?,?)')
-      .run(sha256hex(token), kind, email, userId, now(), new Date(Date.now() + LINK_TTL).toISOString());
-    return token;
-  }
+  #token(kind, email, userId = null) { return mintToken(this.db, kind, email, userId); }
   /** Single use: the row is claimed atomically, so two parallel requests can't both spend it. */
   #claim(kind, token) {
     const row = this.db.prepare('SELECT * FROM email_tokens WHERE token_hash = ? AND kind = ? AND used_at IS NULL AND expires_at > ?').get(sha256hex(String(token || '')), kind, now());
@@ -172,6 +176,19 @@ export class People {
     this.db.prepare('UPDATE users SET email_confirmed_at = ? WHERE id = ?').run(now(), u.id);
     this.store.log(null, 'signup.completed', null, { email: row.email, user: u.id });
     return u;
+  }
+
+  /** An admin hands the link over themselves (no SMTP needed). Older unused reset links for that person die. */
+  resetLink(user) {
+    this.db.prepare("UPDATE email_tokens SET used_at = ? WHERE kind = 'reset' AND user_id = ? AND used_at IS NULL").run(now(), user.id);
+    return mintToken(this.db, 'reset', user.username, user.id, RESET_TTL);
+  }
+  async completeReset({ token, password }) {
+    const row = this.#claim('reset', token);
+    if (!row || !this.auth.activeUser(row.user_id)) throw httpErr(400, 'This link is invalid or has expired');
+    try { await this.auth.setPassword(row.user_id, password); }
+    catch (e) { if (e.status === 400) this.db.prepare('UPDATE email_tokens SET used_at = NULL WHERE token_hash = ?').run(row.token_hash); throw e; }
+    this.store.log(null, 'user.password_reset', null, { user: row.user_id });
   }
 
   /** Called after a correct password on a lapsed account. At most one fresh link per 5 minutes. */

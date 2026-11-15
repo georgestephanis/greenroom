@@ -144,6 +144,10 @@ export class Auth {
   async changePassword(id, current, next, keepSessionId) {
     const u = this.getUser(id);
     if (!u || !(await verifyPassword(String(current || ''), u.password_hash))) throw httpErr(400, 'Current password is wrong');
+    await this.setPassword(id, next, keepSessionId);
+  }
+  /** Sets the password and signs out every session but keepSessionId (all of them on a reset). */
+  async setPassword(id, next, keepSessionId = '') {
     if (String(next || '').length < 10) throw httpErr(400, 'Password must be at least 10 characters');
     const t = now();
     this.db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(await hashPassword(next), t, id);
