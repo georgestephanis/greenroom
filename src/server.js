@@ -65,6 +65,7 @@ export function createApp(overrides = {}) {
   const people = new People({ db, auth, store, config, throttle: attempt });
   const handleSpace = createSpaceHandler({ store, auth, config, clientIp, plugins, throttle: { hit: attempt, clear: (k) => attempts.delete(k) } });
   const origin = (req) => oauth.issuer(req);
+  const pluginUse = db.prepare('SELECT COUNT(*) c FROM spaces, json_each(spaces.plugins_json) WHERE json_each.value = ? AND archived_at IS NULL');
   const openInvites = () => db.prepare('SELECT i.*, u.display_name AS creator FROM invites i JOIN users u ON u.id = i.created_by WHERE i.used_at IS NULL AND i.expires_at > ? ORDER BY i.created_at DESC').all(now());
   const teamUsers = () => db.prepare('SELECT * FROM users ORDER BY created_at').all().map((u) => ({ ...u, lapsed: !u.disabled_at && auth.lapsed(u) }));
   const pubLink = (req, space, g) => ({
@@ -81,7 +82,7 @@ export function createApp(overrides = {}) {
       ...on.filter((n) => !plugins.installed(n)).map((n) => ({ name: n, installed: false, instance_enabled: false, enabled: true, settings: {}, spec: {} })),
     ];
   };
-  const flag = (v) => (v === undefined ? undefined : v === true || v === '1' || v === 'true');
+  const flag = (v) => (Array.isArray(v) ? flag(v.at(-1)) : v === undefined ? undefined : v === true || v === '1' || v === 'true'); // last wins: an unchecked box falls back to its hidden 0
   // The dashboard form sends one s_{key} field per setting; JSON callers send `settings` directly.
   const formSettings = (spec, body) => {
     const out = {};
@@ -268,7 +269,7 @@ export function createApp(overrides = {}) {
       requireAdmin(cred);
       plugins.setInstanceEnabled(c, flag(body.enabled) ?? true);
       store.log(cred, flag(body.enabled) === false ? 'plugin.disabled' : 'plugin.enabled', null, { plugin: c });
-      return { status: 200, body: { ok: true }, next: '/instance' };
+      return { status: 200, body: { ok: true }, next: '/instance#plugins' };
     }
     if (a === 'admin' && b === 'smtp' && !c && m === 'POST') { requireAdmin(cred); people.setSmtp(cred, body, origin(req)); return { status: 200, body: people.view(), next: '/instance#people' }; }
     if (a === 'admin' && b === 'smtp' && c === 'test' && m === 'POST') { requireAdmin(cred); await people.test(cred); return { status: 200, body: { ok: true }, next: '/instance?mailed=1#people' }; }
@@ -470,7 +471,7 @@ export function createApp(overrides = {}) {
     if (p === '/account') { requireSession(cred); return html(res, 200, ui.accountPage(cred, url.searchParams.get('saved'), url.searchParams.get('error'))); }
     if (p === '/team') return html(res, 200, ui.teamPage(cred, teamUsers(), openInvites()));
     if (p === '/instance/migrate') { requireAdmin(cred); return html(res, 200, ui.migratePage(cred, store.listSpaces(), jobView(migration), url.searchParams.get('error'))); }
-    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n) })), { ...people.view(), mailed: url.searchParams.get('mailed') })); }
+    if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n), spaces: pluginUse.get(n).c })), { ...people.view(), mailed: url.searchParams.get('mailed') })); }
     m = /^\/spaces\/([^/]+)\/export$/.exec(p);
     if (m) {
       const space = store.space(m[1]);

@@ -446,3 +446,14 @@ test('export activity is logged', async (x) => {
   await exportTo(admin, 'demo', false);
   assert.ok(t.db.prepare("SELECT 1 FROM activity_log WHERE action = 'space.exported'").get());
 });
+
+test('dashboard: the Instance table counts spaces, and the space checkbox turns a plugin on and off', async (x) => {
+  const { t, admin } = await world(x, { on: ['watermark'] });
+  assert.match(await (await admin.fetch('/instance')).text(), /<strong>watermark<\/strong>[\s\S]*?1 using it/);
+  const form = (body) => admin.fetch('/api/spaces/demo/plugins/watermark', { method: 'POST', body: `_csrf=${admin.csrf}&_method=PUT&${body}`, headers: { 'content-type': 'application/x-www-form-urlencoded' } });
+  const on = () => JSON.parse(t.store.space('demo').plugins_json).includes('watermark');
+  assert.equal((await form('enabled=0')).status, 303); // unchecked: only the hidden 0 is sent
+  assert.equal(on(), false);
+  await form('enabled=0&enabled=1'); // checked: the box's 1 comes last
+  assert.equal(on(), true);
+});

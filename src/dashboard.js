@@ -153,8 +153,10 @@ ${ppl.smtp ? `<form method="post" action="/api/admin/smtp/test" class="inline">$
 <label>Logo URL <input type="url" name="logo" value="${esc(brand.logo)}" placeholder="https://…"></label>
 <label>Accent colour <input type="color" name="accent" value="${esc(brand.accent || '#1a73e8')}"></label><button>Save branding</button></form></section>
 <section class="card"><h2>Move to Spacefast</h2><p>Done self-hosting? Copy your spaces, with their history if you like, to Spacefast. Nothing here changes.</p><p><a href="/instance/migrate">Move spaces…</a></p></section>
-<section class="card"><h2>Plugins</h2><p>Installed plugins are off until you turn them on here; each space then opts in on its own page.</p><ul>${plugins.map((p) => `<li><strong>${esc(p.name)}</strong> ${esc(p.version)} \u2014 ${esc(p.description)}
-<form method="post" action="/api/admin/plugins/${esc(p.name)}" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${p.on ? '0' : '1'}"><button class="link">${p.on ? 'Turn off' : 'Turn on'}</button></form></li>`).join('')}</ul></section>`);
+<section class="card" id="plugins"><h2>Plugins</h2><p>Installed plugins are off until you turn them on here. Each space then opts in from its own page.</p>
+${plugins.length ? `<table><thead><tr><th>Plugin</th><th>Status</th><th>Spaces</th><th></th></tr></thead><tbody>${plugins.map((p) => `<tr><td><strong>${esc(p.name)}</strong> <small>${esc(p.version)}</small><br><small>${esc(p.description)}</small></td>
+<td><span class="badge${p.on ? ' live' : ''}">${p.on ? 'On' : 'Off'}</span></td><td>${p.spaces ? `${p.spaces} using it` : '<small>none</small>'}</td>
+<td><form method="post" action="/api/admin/plugins/${esc(p.name)}" class="inline">${hidden(cred)}<input type="hidden" name="enabled" value="${p.on ? '0' : '1'}"><button${p.on ? ` class="link" data-danger${p.spaces ? ` title="Pauses it in ${p.spaces} space(s); their data and settings are kept"` : ''}` : ''}>${p.on ? 'Turn off' : 'Turn on'}</button></form></td></tr>`).join('')}</tbody></table>` : '<p><small>No plugins installed.</small></p>'}</section>`);
 }
 
 export function migratePage(cred, spaces, job, error) {
@@ -189,7 +191,7 @@ function pluginsCard(cred, space, rows) {
     ? `<p class="warn"><strong>${esc(p.name)}</strong> is on for this space but not installed on this instance. Its data is kept; it works again once an admin installs and enables it.</p>`
     : `<form method="post" action="/api/spaces/${esc(space.slug)}/plugins/${esc(p.name)}">${hidden(cred)}<input type="hidden" name="_method" value="PUT"><input type="hidden" name="_next" value="/spaces/${esc(space.slug)}#plugins">
 <h3>${esc(p.name)}</h3><small>${esc(p.description)}</small>
-<label>Enabled <select name="enabled"><option value="1"${p.enabled ? ' selected' : ''}>On</option><option value="0"${p.enabled ? '' : ' selected'}>Off</option></select></label>
+<input type="hidden" name="enabled" value="0"><label class="check"><input type="checkbox" name="enabled" value="1"${p.enabled ? ' checked' : ''}> On for this space</label>
 ${Object.entries(p.spec).map(([k, sp]) => `<label>${esc(sp.label || k)} ${input(p, k, sp)}</label>`).join('')}<button>Save</button></form>`).join('')}</section>`;
 }
 
