@@ -26,7 +26,7 @@ export function authPage(title, cred, error, fields, action, button, extra = '')
 }
 const field = (name, label, type = 'text', attrs = '') => `<label>${esc(label)}<input name="${name}" type="${type}" ${attrs} required></label>`;
 export const loginFields = field('email', 'Email', 'email', 'autocomplete="username"') + field('password', 'Password', 'password', 'autocomplete="current-password"');
-export const setupFields = field('name', 'Your name') + field('email', 'Email', 'email', 'autocomplete="username"') + field('password', 'Password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
+export const setupFields = field('name', 'Your name', 'text', 'autocomplete="name"') + field('email', 'Email', 'email', 'autocomplete="username"') + field('password', 'Password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
 
 export function spacesPage(cred, spaces) {
   const rows = spaces.map((s) => `<tr><td><a href="/spaces/${esc(s.slug)}">${esc(s.name)}</a><br><small>/s/${esc(s.slug)}/</small></td>
@@ -72,7 +72,7 @@ ${list('Added', d.added, (f) => `<li>${esc(f.path)} <small>${fmtBytes(f.size)}</
 ${!d.added.length && !d.removed.length && !d.changed.length ? '<p>No differences.</p>' : ''}${td}`);
 }
 
-export const signupFields = field('name', 'Your name') + field('password', 'Password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
+export const signupFields = field('name', 'Your name', 'text', 'autocomplete="name"') + field('password', 'Password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"');
 // One page for every outcome: allowed, not allowed and already registered all read "check your inbox".
 export const signupPage = (cred, sent, error) => (sent
   ? messagePage(null, 'Check your inbox', 'If that address can sign up here, we have sent it a link. It is valid for 30 minutes.')
