@@ -51,7 +51,7 @@ export function request(url, { method = 'GET', headers = {}, body, maxBytes = 64
     });
     const deadline = setTimeout(() => req.destroy(new Error(`${what} timed out`)), timeoutMs);
     req.on('close', () => clearTimeout(deadline));
-    req.on('error', reject);
+    req.on('error', (e) => { body?.destroy?.(); reject(e); }); // free a piped file handle too
     if (body?.pipe) { body.on('error', (e) => req.destroy(e)); body.pipe(req); } else req.end(body);
   });
 }

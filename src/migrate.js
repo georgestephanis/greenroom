@@ -27,9 +27,11 @@ export function startMigration({ store, cas, tls = {} }, { url, token, slugs, hi
     spaces: spaces.map((s) => ({ slug: s.slug, name: s.name, status: 'waiting', versions: 0, note: '' })) };
 
   const resolve = (p) => (/^https:/i.test(p) ? new URL(p) : new URL(String(p).replace(/^\/+/, ''), root));
-  async function api(method, path, body, headers = {}) {
-    const r = await request(resolve(path), { method, tls, maxBytes: 8 * 1024 * 1024, timeoutMs: 5 * 60e3, what: 'Target API',
-      headers: { authorization: `Bearer ${token}`, accept: 'application/json', 'content-type': 'application/json', ...headers }, body: body && JSON.stringify(body) });
+  async function api(method, path, body = {}, headers = {}) {
+    const u = resolve(path);
+    if (u.origin !== root.origin) throw new Error(`Target pointed API calls at another host (${u.origin}); the key only goes to ${root.origin}`);
+    const r = await request(u, { method, tls, maxBytes: 8 * 1024 * 1024, timeoutMs: 5 * 60e3, what: 'Target API',
+      headers: { authorization: `Bearer ${token}`, accept: 'application/json', 'content-type': 'application/json', ...headers }, body: JSON.stringify(body) }); // always a JSON body: Fastify 400s an empty one
     let j = null;
     try { j = JSON.parse(r.body); } catch {}
     if (r.status >= 300) {
@@ -86,7 +88,7 @@ export function startMigration({ store, cas, tls = {} }, { url, token, slugs, hi
       row.versions++;
     }
     row.status = 'done';
-    row.url = made.data?.space?.url || made.data?.url || '';
+    row.url = made.data?.space?.url || made.data?.space?.liveUrl || made.data?.url || ''; // homefast says liveUrl
   }
 
   job.promise = (async () => {
