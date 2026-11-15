@@ -90,6 +90,15 @@ Each space page has **Download current site** (`{slug}.greenroom.zip`) and **Dow
 has an **Import** card that takes either file; an existing slug is never overwritten unless you tick Replace.
 Share links, passwords and tokens are never exported. Format, limits and what is left out: [docs/bundle-spec.md](docs/bundle-spec.md).
 
+## Moving to Spacefast
+
+Done self-hosting? **Instance → Move to Spacefast** copies spaces to Spacefast, or to a homefast instance, over its public
+API. Mint an API key on the target that can create spaces and publish, paste it with the API address, pick spaces, and
+choose live versions only or full history (replayed oldest first; only the version live here goes live there). The key is
+used for that run only and never saved. Team and link-only spaces arrive private, public ones public. A slug already taken
+on the target is skipped and reported. Nothing here is changed or deleted. People, share links, plugin data and original
+dates are not carried over; the report at the end lists what moved.
+
 ## Develop
 
 ```bash

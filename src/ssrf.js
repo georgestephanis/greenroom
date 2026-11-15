@@ -34,25 +34,31 @@ export function guardedLookup(hostname, options, cb) {
   dns.lookup(hostname, { all: true }, (err, list) => (err ? cb(err) : done(list)));
 }
 
-/** GET an https URL as JSON: public addresses only, no redirects, size- and time-limited. */
-// `timeoutMs` bounds the whole fetch, not just idle gaps: a host trickling a byte at a time can't hold
-// the consent page open. `tls` is for tests only (a local CA and lookup); production passes nothing.
-export function fetchJson(url, { maxBytes = 64 * 1024, timeoutMs = 5000, tls = {} } = {}) {
+/** One https request to a public address: no redirects, size- and time-limited. `body` is a string, Buffer
+ *  or readable stream. `timeoutMs` bounds the whole exchange, not just idle gaps, so a host trickling a
+ *  byte at a time can't hold us. `tls` is for tests only (a local CA and lookup); production passes nothing. */
+export function request(url, { method = 'GET', headers = {}, body, maxBytes = 64 * 1024, timeoutMs = 5000, tls = {}, what = 'Request' } = {}) {
   return new Promise((resolve, reject) => {
     const u = new URL(url);
-    if (u.protocol !== 'https:' || /^(localhost|.*\.localhost|.*\.local)$/i.test(u.hostname)) return reject(new Error('Client metadata must be on a public https host'));
+    if (u.protocol !== 'https:' || /^(localhost|.*\.localhost|.*\.local)$/i.test(u.hostname)) return reject(new Error(`${what} must go to a public https host`));
     const literal = u.hostname.replace(/^\[|\]$/g, ''); // Node never calls lookup for IP literals, so check them here
     if (net.isIP(literal) && isPrivateIp(literal)) return reject(new Error(`Blocked private address ${literal}`));
-    const req = https.request(u, { method: 'GET', lookup: guardedLookup, ...tls, headers: { accept: 'application/json' } }, (res) => {
-      if (res.statusCode !== 200) { res.resume(); return reject(new Error(`Client metadata returned HTTP ${res.statusCode}`)); }
+    const req = https.request(u, { method, lookup: guardedLookup, ...tls, headers }, (res) => {
       const chunks = []; let n = 0;
-      res.on('data', (c) => { n += c.length; if (n > maxBytes) req.destroy(new Error('Client metadata too large')); else chunks.push(c); });
-      res.on('end', () => { try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); } catch { reject(new Error('Client metadata is not JSON')); } });
+      res.on('data', (c) => { n += c.length; if (n > maxBytes) req.destroy(new Error(`${what} response too large`)); else chunks.push(c); });
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
       res.on('error', reject);
     });
-    const deadline = setTimeout(() => req.destroy(new Error('Client metadata fetch timed out')), timeoutMs);
+    const deadline = setTimeout(() => req.destroy(new Error(`${what} timed out`)), timeoutMs);
     req.on('close', () => clearTimeout(deadline));
     req.on('error', reject);
-    req.end();
+    if (body?.pipe) { body.on('error', (e) => req.destroy(e)); body.pipe(req); } else req.end(body);
   });
+}
+
+/** GET an https URL as JSON (client metadata documents). */
+export async function fetchJson(url, { maxBytes = 64 * 1024, timeoutMs = 5000, tls = {} } = {}) {
+  const r = await request(url, { headers: { accept: 'application/json' }, maxBytes, timeoutMs, tls, what: 'Client metadata' });
+  if (r.status !== 200) throw new Error(`Client metadata returned HTTP ${r.status}`);
+  try { return JSON.parse(r.body); } catch { throw new Error('Client metadata is not JSON'); }
 }

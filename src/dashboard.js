@@ -9,11 +9,11 @@ const fmtBytes = (n) => (n > 1048576 ? `${(n / 1048576).toFixed(1)} MB` : n > 10
 // Stored times are UTC ISO; the UTC text is the no-JS fallback and app.js shows the viewer's local time.
 export const fmtTime = (t) => (t ? `<time datetime="${esc(t)}">${esc(t.slice(0, 16).replace('T', ' '))} UTC</time>` : '');
 
-export function layout(title, cred, body, { nav = true } = {}) {
+export function layout(title, cred, body, { nav = true, head = '' } = {}) {
   const csrf = cred?.csrf ? `<meta name="csrf" content="${esc(cred.csrf)}">` : '';
   const admin = cred?.user?.role === 'admin';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(title)} · greenroom</title>${csrf}<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script></head>
+<title>${esc(title)} · greenroom</title>${csrf}<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script>${head}</head>
 <body>${nav && cred ? `<header><a class="brand" href="/">greenroom</a><nav><a href="/">Spaces</a><a href="/access">Access</a>${admin ? '<a href="/team">Team</a><a href="/instance">Instance</a>' : ''}
 <form method="post" action="/api/logout" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/login"><button class="link">Sign out (${esc(cred.user.display_name || cred.user.username)})</button></form></nav></header>` : ''}
 <main>${body}</main></body></html>`;
@@ -128,8 +128,24 @@ ${ppl.smtp ? `<form method="post" action="/api/admin/smtp/test" class="inline">$
 <form method="post" action="/api/admin/branding">${hidden(cred)}<label>Agency name <input name="name" value="${esc(brand.name)}" maxlength="100"></label>
 <label>Logo URL <input type="url" name="logo" value="${esc(brand.logo)}" placeholder="https://…"></label>
 <label>Accent colour <input type="color" name="accent" value="${esc(brand.accent || '#1a73e8')}"></label><button>Save branding</button></form></section>
+<section class="card"><h2>Move to Spacefast</h2><p>Done self-hosting? Copy your spaces, with their history if you like, to Spacefast or a homefast instance. Nothing here changes.</p><p><a href="/instance/migrate">Move spaces…</a></p></section>
 <section class="card"><h2>Plugins</h2><p>Installed plugins are off until you turn them on here; each space then opts in on its own page.</p><ul>${plugins.map((p) => `<li><strong>${esc(p.name)}</strong> ${esc(p.version)} \u2014 ${esc(p.description)}
 <form method="post" action="/api/admin/plugins/${esc(p.name)}" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${p.on ? '0' : '1'}"><button class="link">${p.on ? 'Turn off' : 'Turn on'}</button></form></li>`).join('')}</ul></section>`);
+}
+
+export function migratePage(cred, spaces, job, error) {
+  const running = job && !job.done;
+  const rows = job ? `<table><thead><tr><th>Space</th><th>Status</th><th>Versions</th><th>Notes</th></tr></thead><tbody>${job.spaces.map((s) => `<tr><td>${esc(s.name)} <small>${esc(s.slug)}</small></td><td>${esc(s.status)}</td><td>${s.versions}</td><td>${esc(s.note)}${s.url ? ` <a href="${esc(s.url)}" rel="noreferrer">Open</a>` : ''}</td></tr>`).join('')}</tbody></table>` : '';
+  const report = job ? `<section class="card"><h2>${running ? 'Moving…' : 'Report'}</h2><p>To ${esc(job.target)}, ${job.history ? 'with history' : 'live versions only'}. Started ${fmtTime(job.startedAt)}${job.finishedAt ? `, finished ${fmtTime(job.finishedAt)}` : ''}.</p>${rows}
+${running ? '<p><small>This page refreshes every few seconds. You can leave it; the move keeps going.</small></p>' : `<p>Not carried over: ${job.notCarried.map(esc).join('; ')}. Your spaces still run here until you delete them.</p>`}</section>` : '';
+  const form = running ? '' : `<section class="card"><h2>Move spaces</h2><p>Mint an API key on the target that can create spaces and publish (on Spacefast: <em>Settings → API keys</em>), and paste it here. It is used for this move only and never saved.</p>
+${error ? `<p class="error">${esc(error)}</p>` : ''}<form method="post" action="/api/admin/migrate">${hidden(cred)}<input type="hidden" name="_next" value="/instance/migrate">
+<label>API address <input type="url" name="url" value="https://api.spacefast.com" required></label>
+<label>API key <input type="password" name="token" autocomplete="off" required></label>
+<fieldset><legend>Spaces</legend>${spaces.map((s) => `<label class="check"><input type="checkbox" name="spaces" value="${esc(s.slug)}" checked> ${esc(s.name)} <small>${esc(s.privacy)}</small></label>`).join('') || '<small>No spaces yet.</small>'}</fieldset>
+<label class="check"><input type="checkbox" name="history" value="1"> Include every earlier version (oldest first; only the version live here goes live there)</label>
+<p><small>Team and link-only spaces become private; public spaces stay public. A slug already taken on the target is skipped and reported.</small></p><button>Start the move</button></form></section>`;
+  return layout('Move to Spacefast', cred, `<h1>Move to Spacefast</h1>${report}${form}`, { head: running ? '<meta http-equiv="refresh" content="3">' : '' });
 }
 
 // A generic form per plugin, drawn from its spaceSettings spec. A plugin on the space but not installed

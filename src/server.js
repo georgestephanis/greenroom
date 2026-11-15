@@ -18,6 +18,7 @@ import { exportBundle, importBundle, verifyExport } from './bundle.js';
 import { newId, now, randomToken, sha256hex } from './util.js';
 import * as ui from './dashboard.js';
 import { createPlugins } from './plugins.js';
+import { startMigration, jobView } from './migrate.js';
 
 const html = (res, status, body) => { res.setHeader('Content-Type', 'text/html; charset=utf-8'); res.statusCode = status; res.end(body); };
 const json = (res, status, obj) => { res.setHeader('Content-Type', 'application/json'); res.statusCode = status; res.end(JSON.stringify(obj)); };
@@ -50,6 +51,7 @@ export function createApp(overrides = {}) {
 
   // Login throttle: in memory, pruned on access (no timers). Per account+IP, 10 attempts per 15 minutes.
   // Counted before the scrypt await so parallel attempts can't slip past; a success clears it.
+  let migration = null; // the one Move to Spacefast job (src/migrate.js)
   const attempts = new Map();
   const attempt = (key, max = 10, windowMs = 15 * 60e3) => {
     const t = Date.now();
@@ -227,6 +229,16 @@ export function createApp(overrides = {}) {
     if (a === 'admin' && b === 'smtp' && c === 'test' && m === 'POST') { requireAdmin(cred); await people.test(cred); return { status: 200, body: { ok: true }, next: '/instance?mailed=1#people' }; }
     if (a === 'admin' && b === 'signup' && m === 'POST') { requireAdmin(cred); people.setSignup(cred, body); return { status: 200, body: people.view(), next: '/instance#people' }; }
     if (a === 'admin' && b === 'reconfirm' && m === 'POST') { requireAdmin(cred); people.setReconfirm(cred, body); return { status: 200, body: people.view(), next: '/instance#people' }; }
+    // Move to Spacefast (or homefast): the token comes in on this request and stays in the job's closure.
+    if (a === 'admin' && b === 'migrate' && m === 'GET') { requireAdmin(cred); return { status: 200, body: { migration: jobView(migration) } }; }
+    if (a === 'admin' && b === 'migrate' && m === 'POST') {
+      requireAdmin(cred);
+      if (migration && !migration.done) throw httpErr(409, 'A move is already running');
+      const slugs = body.spaces === undefined ? [] : [].concat(body.spaces);
+      migration = startMigration({ store, cas, tls: config.outboundTls }, { url: body.url, token: body.token, slugs, history: flag(body.history) });
+      store.log(cred, 'instance.migrate', null, { target: migration.target, spaces: migration.spaces.length, history: migration.history });
+      return { status: 202, body: { migration: jobView(migration) }, next: '/instance/migrate' };
+    }
     if (a === 'admin' && b === 'gc' && m === 'POST') {
       requireAdmin(cred);
       const r = await store.maybeGc(true);
@@ -408,6 +420,7 @@ export function createApp(overrides = {}) {
     }
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
     if (p === '/team') return html(res, 200, ui.teamPage(cred, teamUsers(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
+    if (p === '/instance/migrate') { requireAdmin(cred); return html(res, 200, ui.migratePage(cred, store.listSpaces(), jobView(migration), url.searchParams.get('error'))); }
     if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n) })), { ...people.view(), mailed: url.searchParams.get('mailed') })); }
     m = /^\/spaces\/([^/]+)\/export$/.exec(p);
     if (m) {
