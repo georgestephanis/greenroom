@@ -165,6 +165,21 @@ export function createApp(overrides = {}) {
       res.setHeader('Set-Cookie', clearCookie);
       return { status: 200, body: { ok: true }, next: '/login' };
     }
+    // A person's own account: their session only, never an agent token acting as them.
+    if (a === 'account' && !b && m === 'POST') {
+      requireSession(cred);
+      auth.setName(cred.userId, body.name);
+      store.log(cred, 'account.updated', null, {});
+      return { status: 200, body: { ok: true }, next: '/account?saved=name' };
+    }
+    if (a === 'account' && b === 'password' && m === 'POST') {
+      requireSession(cred);
+      if (attempt(`password|${cred.userId}`)) throw httpErr(429, 'Too many attempts, try again later');
+      await auth.changePassword(cred.userId, body.current, body.password, cred.id);
+      attempts.delete(`password|${cred.userId}`);
+      store.log(cred, 'account.password_changed', null, {});
+      return { status: 200, body: { ok: true }, next: '/account?saved=password' };
+    }
     if (a === 'me') return { status: 200, body: { user: { id: cred.userId, email: cred.user.username, role: cred.user.role }, credential: cred.type, scope: cred.scope } };
 
     // Escalation set: needs a person's own session (requireSession), never a scoped credential.
@@ -419,6 +434,7 @@ export function createApp(overrides = {}) {
       return html(res, 200, ui.accessPage(cred, rows.map((r) => ({ ...r, scope: scopeString(JSON.parse(r.scope_json)) })), store.listSpaces()));
     }
     if (p === '/') return html(res, 200, ui.spacesPage(cred, store.listSpaces()));
+    if (p === '/account') { requireSession(cred); return html(res, 200, ui.accountPage(cred, url.searchParams.get('saved'), url.searchParams.get('error'))); }
     if (p === '/team') return html(res, 200, ui.teamPage(cred, teamUsers(), db.prepare('SELECT COUNT(*) c FROM invites WHERE used_at IS NULL AND expires_at > ?').get(now()).c));
     if (p === '/instance/migrate') { requireAdmin(cred); return html(res, 200, ui.migratePage(cred, store.listSpaces(), jobView(migration), url.searchParams.get('error'))); }
     if (p === '/instance') { requireAdmin(cred); return html(res, 200, ui.instancePage(cred, store.stats(), url.searchParams.get('gc') ? await store.gcPromise : null, oauth.dcrEnabled(), store.branding(), plugins.names().map((n) => ({ ...plugins.info(n), on: plugins.instanceEnabled(n) })), { ...people.view(), mailed: url.searchParams.get('mailed') })); }

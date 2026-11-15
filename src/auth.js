@@ -133,6 +133,23 @@ export class Auth {
     return this.getUser(id);
   }
 
+  /** A person's own display name: trimmed, inner whitespace collapsed, 1-100 characters. */
+  setName(id, name) {
+    name = String(name ?? '').replace(/\s+/g, ' ').trim();
+    if (!name || name.length > 100) throw httpErr(400, 'Name must be 1 to 100 characters');
+    this.db.prepare('UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?').run(name, now(), id);
+  }
+
+  /** Needs the current password. Signs out every other session; agent tokens are separate grants and stay. */
+  async changePassword(id, current, next, keepSessionId) {
+    const u = this.getUser(id);
+    if (!u || !(await verifyPassword(String(current || ''), u.password_hash))) throw httpErr(400, 'Current password is wrong');
+    if (String(next || '').length < 10) throw httpErr(400, 'Password must be at least 10 characters');
+    const t = now();
+    this.db.prepare('UPDATE users SET password_hash = ?, updated_at = ? WHERE id = ?').run(await hashPassword(next), t, id);
+    this.db.prepare('UPDATE sessions SET revoked_at = COALESCE(revoked_at, ?) WHERE user_id = ? AND id != ?').run(t, id, keepSessionId);
+  }
+
   async login(email, password, meta = {}) {
     // Rows from before M6 were stored lowercased but otherwise as typed (e.g. a Unicode domain); fall back to that form.
     const find = (x) => this.db.prepare('SELECT * FROM users WHERE username = ?').get(x);

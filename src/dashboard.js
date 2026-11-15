@@ -14,8 +14,8 @@ export function layout(title, cred, body, { nav = true, head = '' } = {}) {
   const admin = cred?.user?.role === 'admin';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>${esc(title)} · greenroom</title>${csrf}<link rel="stylesheet" href="/assets/app.css"><script src="/assets/app.js" defer></script>${head}</head>
-<body>${nav && cred ? `<header><a class="brand" href="/">greenroom</a><nav><a href="/">Spaces</a><a href="/access">Access</a>${admin ? '<a href="/team">Team</a><a href="/instance">Instance</a>' : ''}
-<form method="post" action="/api/logout" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/login"><button class="link">Sign out (${esc(cred.user.display_name || cred.user.username)})</button></form></nav></header>` : ''}
+<body>${nav && cred ? `<header><a class="brand" href="/">greenroom</a><nav><a href="/">Spaces</a><a href="/access">Access</a>${admin ? '<a href="/team">Team</a><a href="/instance">Instance</a>' : ''}<a href="/account">${esc(cred.user.display_name || cred.user.username)}</a>
+<form method="post" action="/api/logout" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/login"><button class="link">Sign out</button></form></nav></header>` : ''}
 <main>${body}</main></body></html>`;
 }
 const hidden = (cred) => (cred?.csrf ? `<input type="hidden" name="_csrf" value="${esc(cred.csrf)}">` : '');
@@ -77,6 +77,21 @@ export const signupFields = field('name', 'Your name', 'text', 'autocomplete="na
 export const signupPage = (cred, sent, error) => (sent
   ? messagePage(null, 'Check your inbox', 'If that address can sign up here, we have sent it a link. It is valid for 30 minutes.')
   : authPage('Sign up', cred, error, field('email', 'Work email', 'email', 'autocomplete="email"'), '/api/signup', 'Send me a link'));
+
+// ponytail: name and password only. Email is the sign-in and the signup allowlist's subject, so changing it
+// needs a confirmation round trip; add it with people.js's mail flow when someone asks.
+export function accountPage(cred, saved, error) {
+  const u = cred.user;
+  return layout('Account', cred, `<h1>Account</h1>${error ? `<p class="error">${esc(error)}</p>` : ''}
+${saved === 'name' ? '<p class="ok">Name saved.</p>' : saved === 'password' ? '<p class="ok">Password changed. Your other sessions are signed out.</p>' : ''}
+<section class="card"><h2>Profile</h2><form method="post" action="/api/account">${hidden(cred)}
+<label>Name<input name="name" value="${esc(u.display_name || '')}" maxlength="100" autocomplete="name" required></label>
+<p><small>Signed in as ${esc(u.username)} (${esc(u.role)}). Changing your email isn't supported yet.</small></p><button>Save</button></form></section>
+<section class="card"><h2>Password</h2><form method="post" action="/api/account/password">${hidden(cred)}
+<input type="hidden" name="username" value="${esc(u.username)}" autocomplete="username">
+${field('current', 'Current password', 'password', 'autocomplete="current-password"')}${field('password', 'New password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"')}
+<button>Change password</button></form></section>`);
+}
 
 export function teamPage(cred, users, invites, created) {
   return layout('Team', cred, `<h1>Team</h1>
