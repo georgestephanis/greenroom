@@ -9,6 +9,12 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 - **One file of state**: SQLite (`node:sqlite`) plus a blob directory. No native dependencies, no timers, no background workers.
 - Node 24+, GPL-3.0-or-later.
 
+![The spaces list: three spaces, who can view each, and when each was last published](docs/screenshots/spaces.png)
+
+![A space page: a live preview of the published site, with upload and export below](docs/screenshots/space.png)
+
+![The account page in dark mode: name and password](docs/screenshots/account-dark.png)
+
 This release covers milestones M0–M6: the core, OAuth and MCP, client sharing (share links, passwords, expiry, view tracking, branding), portability (export and import), and plugins (an API, a `sqlite` plugin and a `watermark` reference plugin; see [docs/writing-a-plugin.md](docs/writing-a-plugin.md)), and people (SMTP, domain self-signup, offboarding, email re-confirmation). Subdomain mode and a publishing CLI are not built yet.
 
 ## Run it

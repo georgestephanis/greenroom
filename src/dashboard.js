@@ -21,7 +21,7 @@ export function layout(title, cred, body, { nav = true, head = '' } = {}) {
 const hidden = (cred) => (cred?.csrf ? `<input type="hidden" name="_csrf" value="${esc(cred.csrf)}">` : '');
 
 export function authPage(title, cred, error, fields, action, button, extra = '') {
-  return layout(title, cred, `<section class="card narrow"><h1>${esc(title)}</h1>${error ? `<p class="error">${esc(error)}</p>` : ''}
+  return layout(title, cred, `<section class="card narrow"><a class="brand" href="/">greenroom</a><h1>${esc(title)}</h1>${error ? `<p class="error">${esc(error)}</p>` : ''}
 <form method="post" action="${action}">${hidden(cred)}${extra}${fields}<button>${esc(button)}</button></form></section>`, { nav: false });
 }
 const field = (name, label, type = 'text', attrs = '') => `<label>${esc(label)}<input name="${name}" type="${type}" ${attrs} required></label>`;
@@ -34,10 +34,10 @@ export function spacesPage(cred, spaces) {
 <td>${s.live_number ? `v${s.live_number} by ${esc(s.live_author)}<br><small>${fmtTime(s.live_at)}</small>` : '<small>nothing published</small>'}</td></tr>`).join('');
   return layout('Spaces', cred, `<h1>Spaces</h1>
 <table><thead><tr><th>Space</th><th>Who can view</th><th>Last published</th></tr></thead><tbody>${rows || '<tr><td colspan="3">No spaces yet.</td></tr>'}</tbody></table>
-<section class="card"><h2>New space</h2><form method="post" action="/api/spaces">${hidden(cred)}<input type="hidden" name="_next" value="__space__">${field('name', 'Name')}<button>Create</button></form></section>
+<div class="grid"><section class="card"><h2>New space</h2><form method="post" action="/api/spaces">${hidden(cred)}<input type="hidden" name="_next" value="__space__">${field('name', 'Name')}<button>Create</button></form></section>
 <section class="card"><h2>Import a space</h2><form data-upload="/api/import" data-goto="space"><input type="file" name="zip" accept=".zip,application/zip" required>
-<input name="slug" placeholder="Slug (optional; defaults to the one in the bundle)"><label class="check"><input type="checkbox" name="replace" value="1"> Replace the space if that slug exists (its versions are replaced; links and activity stay)</label>
-<button>Import</button><span class="status"></span></form><small>Takes a .greenroom.zip or .greenroom-history.zip exported from greenroom.</small></section>`);
+<label>Slug (optional) <input name="slug" placeholder="Defaults to the one in the bundle"></label><label class="check"><input type="checkbox" name="replace" value="1"> Replace the space if that slug exists (its versions are replaced; links and activity stay)</label>
+<button>Import</button><span class="status"></span></form><small>Takes a .greenroom.zip or .greenroom-history.zip exported from greenroom.</small></section></div>`);
 }
 
 export function spacePage(cred, space, versions, warnings, links, plugins = []) {
@@ -52,10 +52,10 @@ ${v.id !== space.live_version_id ? `<form method="post" action="/api/spaces/${es
   return layout(space.name, cred, `<h1>${esc(space.name)}</h1><p><a href="/s/${esc(space.slug)}/" target="_blank" rel="noopener">/s/${esc(space.slug)}/</a></p>
 ${live ? `<iframe class="preview" sandbox="${PREVIEW_SANDBOX}" src="/s/${esc(space.slug)}/" title="Preview of ${esc(space.name)}"></iframe>` : '<p>Nothing published yet. Upload a zip below.</p>'}
 ${warnings.length ? `<section class="card warn"><h2>Warnings on the live version</h2><ul>${warnings.map((w) => `<li>${esc(w)}</li>`).join('')}</ul></section>` : ''}
-<section class="card"><h2>Upload</h2><form data-upload="/api/spaces/${esc(space.slug)}/upload"><input type="file" name="zip" accept=".zip,application/zip" required>
-<input name="message" placeholder="What changed?"><button>Publish zip</button><span class="status"></span></form></section>
+<div class="grid"><section class="card"><h2>Upload</h2><form data-upload="/api/spaces/${esc(space.slug)}/upload"><input type="file" name="zip" accept=".zip,application/zip" required>
+<label>Message <input name="message" placeholder="What changed?"></label><button>Publish zip</button><span class="status"></span></form></section>
 <section class="card"><h2>Export</h2><p><a href="/spaces/${esc(space.slug)}/export">Download current site</a> · <a href="/spaces/${esc(space.slug)}/export?history=1">Download with full history</a></p>
-<small>Share links and passwords are never included.</small></section>
+<small>Share links and passwords are never included.</small></section></div>
 <section class="card"><h2>Who can view</h2><form method="post" action="/api/spaces/${esc(space.slug)}">${hidden(cred)}<input type="hidden" name="_method" value="PATCH"><input type="hidden" name="_next" value="/spaces/${esc(space.slug)}">
 <select name="privacy">${[['team', 'Team only'], ['link', 'Anyone with the link'], ['public', 'Public']].map(([v, l]) => `<option value="${v}"${space.privacy === v ? ' selected' : ''}>${l}</option>`).join('')}</select>
 <button>Save</button></form><small>Team members can always view. Switching away from “Anyone with the link” pauses its links; switching back restores them. A link created while the space is team-only switches it to “Anyone with the link”; links paused earlier stay paused until you resume them.</small></section>
@@ -84,20 +84,20 @@ export function accountPage(cred, saved, error) {
   const u = cred.user;
   return layout('Account', cred, `<h1>Account</h1>${error ? `<p class="error">${esc(error)}</p>` : ''}
 ${saved === 'name' ? '<p class="ok">Name saved.</p>' : saved === 'password' ? '<p class="ok">Password changed. Your other sessions are signed out.</p>' : ''}
-<section class="card"><h2>Profile</h2><form method="post" action="/api/account">${hidden(cred)}
+<div class="grid"><section class="card"><h2>Profile</h2><form method="post" action="/api/account">${hidden(cred)}
 <label>Name<input name="name" value="${esc(u.display_name || '')}" maxlength="100" autocomplete="name" required></label>
 <p><small>Signed in as ${esc(u.username)} (${esc(u.role)}). Changing your email isn't supported yet.</small></p><button>Save</button></form></section>
 <section class="card"><h2>Password</h2><form method="post" action="/api/account/password">${hidden(cred)}
 <input type="hidden" name="username" value="${esc(u.username)}" autocomplete="username">
 ${field('current', 'Current password', 'password', 'autocomplete="current-password"')}${field('password', 'New password (10+ characters)', 'password', 'minlength="10" autocomplete="new-password"')}
-<button>Change password</button></form></section>`);
+<button>Change password</button></form></section></div>`);
 }
 
 export function teamPage(cred, users, invites, created) {
   return layout('Team', cred, `<h1>Team</h1>
 ${created ? `<section class="card ok"><p>Invite link (shown once, valid 7 days):</p><input readonly class="wide" value="${esc(created)}"></section>` : ''}
 <table><thead><tr><th>Person</th><th>Role</th><th>Last sign-in</th><th></th></tr></thead><tbody>${users.map((u) => `<tr><td>${esc(u.display_name)}<br><small>${esc(u.username)}</small></td><td>${esc(u.role)}${u.disabled_at ? ' <strong>(deactivated)</strong>' : u.lapsed ? ' <strong>(lapsed)</strong>' : ''}</td><td>${fmtTime(u.last_login_at)}</td>
-<td><form method="post" action="/api/users/${esc(u.id)}/${u.disabled_at ? 'reactivate' : 'deactivate'}" class="inline">${hidden(cred)}<button class="link">${u.disabled_at ? 'Reactivate' : 'Deactivate'}</button></form></td></tr>`).join('')}</tbody></table>
+<td><form method="post" action="/api/users/${esc(u.id)}/${u.disabled_at ? 'reactivate' : 'deactivate'}" class="inline">${hidden(cred)}<button class="link"${u.disabled_at ? '' : ' data-danger'}>${u.disabled_at ? 'Reactivate' : 'Deactivate'}</button></form></td></tr>`).join('')}</tbody></table>
 <section class="card"><h2>Invite someone</h2><form method="post" action="/api/invites">${hidden(cred)}<input type="hidden" name="_next" value="__invite__">
 <label>Role<select name="role"><option value="member">Member</option><option value="admin">Admin</option></select></label><button>Create invite link</button></form>
 <small>${invites} unused invite(s) outstanding.</small></section>`);
@@ -108,7 +108,7 @@ function sharing(cred, space, links) {
   const rows = links.map((l) => `<tr><td>${esc(l.label)}${l.password ? ' <span class="badge">password</span>' : ''}<br><small><code>…${esc(l.hint)}</code></small></td>
 <td>${status(l)}<br><small>${l.expires_at ? `until ${fmtTime(l.expires_at)}` : 'no expiry'}</small></td><td>${l.uses}${l.max_uses != null ? ` / ${l.max_uses}` : ''}</td>
 <td>${l.view_count}<br><small>${l.last_viewed_at ? `last ${fmtTime(l.last_viewed_at)}` : 'not opened yet'}</small></td>
-<td>${l.disabled_at && !l.revoked_at && space.privacy === 'link' ? `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/resume" class="inline">${hidden(cred)}<button class="link">Resume</button></form> ` : ''}${l.revoked_at ? '' : `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/revoke" class="inline">${hidden(cred)}<button class="link">Revoke</button></form>`}</td></tr>`).join('');
+<td>${l.disabled_at && !l.revoked_at && space.privacy === 'link' ? `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/resume" class="inline">${hidden(cred)}<button class="link">Resume</button></form> ` : ''}${l.revoked_at ? '' : `<form method="post" action="/api/spaces/${esc(space.slug)}/links/${esc(l.id)}/revoke" class="inline">${hidden(cred)}<button class="link" data-danger>Revoke</button></form>`}</td></tr>`).join('');
   return `<section class="card" id="sharing"><h2>Sharing</h2>
 ${links.length ? `<table><thead><tr><th>Link</th><th>Status</th><th>Uses</th><th>Views</th><th></th></tr></thead><tbody>${rows}</tbody></table>` : '<p>No share links yet. Creating one switches a team-only space to “Anyone with the link”.</p>'}
 <form method="post" action="/api/spaces/${esc(space.slug)}/links">${hidden(cred)}<h3>New link</h3>
@@ -122,10 +122,10 @@ ${links.length ? `<table><thead><tr><th>Link</th><th>Status</th><th>Uses</th><th
 
 export function instancePage(cred, stats, gc, dcr, brand, plugins = [], ppl = {}) {
   const m = ppl.smtp || {}, sel = (v) => (m.security === v ? ' selected' : '');
-  return layout('Instance', cred, `<h1>Instance</h1><ul><li>${stats.spaces} spaces, ${stats.versions} versions, ${stats.users} people</li><li>${fmtBytes(stats.bytesReferenced)} referenced in blob storage</li></ul>
+  return layout('Instance', cred, `<h1>Instance</h1><section class="card"><ul class="stats"><li><strong>${stats.spaces}</strong><small>spaces</small></li><li><strong>${stats.versions}</strong><small>versions</small></li><li><strong>${stats.users}</strong><small>people</small></li><li><strong>${fmtBytes(stats.bytesReferenced)}</strong><small>in blob storage</small></li></ul>
 ${gc ? `<p class="ok">GC removed ${gc.removed} file(s), freed ${fmtBytes(gc.freed)}.</p>` : ''}
 <form method="post" action="/api/admin/gc">${hidden(cred)}<input type="hidden" name="_next" value="/instance?gc=1"><button>Run GC</button></form>
-<p><small>Garbage collection also runs lazily after publishes and deletes (at most every few hours). There are no background timers.</small></p>
+<p><small>Garbage collection also runs lazily after publishes and deletes (at most every few hours). There are no background timers.</small></p></section>
 <section class="card"><h2>Dynamic client registration</h2><p>${dcr ? 'On' : 'Off'}. Clients normally identify themselves with a metadata URL; turn this on only for clients that need RFC 7591 registration.</p>
 <form method="post" action="/api/admin/dcr">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${dcr ? '0' : '1'}"><button>${dcr ? 'Turn off' : 'Turn on'}</button></form></section>
 <section class="card" id="people"><h2>Email (SMTP)</h2>${ppl.mailed ? '<p class="ok">Test email sent.</p>' : ''}<p>Needed for self-signup and re-confirmation. ${ppl.smtp ? 'Configured.' : 'Not configured.'}</p>
@@ -133,7 +133,7 @@ ${gc ? `<p class="ok">GC removed ${gc.removed} file(s), freed ${fmtBytes(gc.free
 <label>Security <select name="security"><option value="tls"${sel('tls')}>Implicit TLS (465)</option><option value="starttls"${sel('starttls')}>STARTTLS (587)</option><option value="none"${sel('none')}>None (relay on this machine only)</option></select></label>
 <label>Username <input name="user" value="${esc(m.user)}" autocomplete="off"></label><label>Password <input type="password" name="pass" autocomplete="new-password" placeholder="${m.hasPass ? 'Saved; leave blank to keep' : ''}"></label>
 <label>From address <input type="email" name="from" value="${esc(m.from)}" required></label><button>Save SMTP</button></form>
-${ppl.smtp ? `<form method="post" action="/api/admin/smtp/test" class="inline">${hidden(cred)}<button>Send test email to me</button></form> <form method="post" action="/api/admin/smtp" class="inline">${hidden(cred)}<input type="hidden" name="clear" value="1"><button class="link">Remove SMTP settings</button></form>` : ''}</section>
+${ppl.smtp ? `<form method="post" action="/api/admin/smtp/test" class="inline">${hidden(cred)}<button>Send test email to me</button></form> <form method="post" action="/api/admin/smtp" class="inline">${hidden(cred)}<input type="hidden" name="clear" value="1"><button class="link" data-danger>Remove SMTP settings</button></form>` : ''}</section>
 <section class="card"><h2>Self-signup</h2><p>${ppl.signupOpen ? 'On: <a href="/signup">/signup</a>' : 'Off'}. People with an address at a listed domain can create a <em>member</em> account. Subdomains must be listed separately. Removing a domain does not deactivate anyone.</p>
 <form method="post" action="/api/admin/signup">${hidden(cred)}<label>Domains (one per line) <textarea name="domains" rows="3">${esc((ppl.domains || []).join('\n'))}</textarea></label>
 <label>Enabled <select name="enabled"><option value="1"${ppl.signup ? ' selected' : ''}>On</option><option value="0"${ppl.signup ? '' : ' selected'}>Off</option></select></label><button>Save</button></form></section>
@@ -184,7 +184,7 @@ function pluginsCard(cred, space, rows) {
 ${Object.entries(p.spec).map(([k, sp]) => `<label>${esc(sp.label || k)} ${input(p, k, sp)}</label>`).join('')}<button>Save</button></form>`).join('')}</section>`;
 }
 
-export const messagePage = (cred, title, msg) => layout(title, cred, `<section class="card narrow"><h1>${esc(title)}</h1><p>${esc(msg)}</p></section>`, { nav: false });
+export const messagePage = (cred, title, msg) => layout(title, cred, `<section class="card narrow"><a class="brand" href="/">greenroom</a><h1>${esc(title)}</h1><p>${esc(msg)}</p></section>`, { nav: false });
 
 const PERM_LABELS = { read: 'Read files and history', publish: 'Publish and roll back', db: 'Use space databases', share: 'Manage share links', export: 'Export spaces' };
 // Space picker, create toggle and permission picker: shared by OAuth consent and the token minting form.
@@ -214,7 +214,7 @@ export function accessPage(cred, rows, spaces, minted) {
   }
   const admin = cred.user.role === 'admin';
   const list = [...groups].map(([g, rs]) => `<h2>${esc(g)}</h2><table><thead><tr><th>Name</th><th>Scope</th>${admin ? '<th>Granted by</th>' : ''}<th>Last used</th><th></th></tr></thead><tbody>${rs.map((r) => `<tr><td>${esc(r.name)}<br><small>${fmtTime(r.created_at)}</small></td><td><code>${esc(r.scope)}</code></td>${admin ? `<td>${esc(r.granter)}</td>` : ''}<td>${fmtTime(r.last_used_at) || '<small>never</small>'}</td>
-<td><form method="post" action="/api/tokens/${esc(r.id)}/revoke" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/access"><button class="link">Revoke</button></form></td></tr>`).join('')}</tbody></table>`).join('');
+<td><form method="post" action="/api/tokens/${esc(r.id)}/revoke" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/access"><button class="link" data-danger>Revoke</button></form></td></tr>`).join('')}</tbody></table>`).join('');
   return layout('Access', cred, `<h1>Access</h1><p>Apps and agents that act for ${admin ? 'members of this team' : 'you'}. Revoking ends them immediately.</p>
 ${list || '<p>Nothing connected yet.</p>'}
 <section class="card"><h2>New agent token</h2><p><small>For agents that take a pasted <code>Authorization: Bearer</code> token instead of signing in.</small></p>
@@ -251,6 +251,8 @@ export const APP_JS = `
       else status.textContent = (await r.json().catch(() => ({}))).error || 'Upload failed';
     });
   }
+  const here = document.querySelector('header nav a[href="' + location.pathname + '"]') || (location.pathname.startsWith('/spaces/') && document.querySelector('header nav a[href="/"]'));
+  if (here) here.setAttribute('aria-current', 'page');
   for (const el of document.querySelectorAll('time[datetime]')) {
     const d = new Date(el.dateTime);
     if (isNaN(d)) continue;
@@ -269,16 +271,56 @@ export const APP_JS = `
 `;
 
 export const APP_CSS = `
-:root{--bg:#fff;--fg:#1b1f24;--mut:#667;--line:#dde;--accent:#2a5bd7;--card:#f7f8fb;--bad:#b3261e;--good:#1b6e3a}
-@media(prefers-color-scheme:dark){:root{--bg:#14161a;--fg:#e8eaee;--mut:#99a;--line:#2b2f38;--accent:#7aa2ff;--card:#1c1f26;--bad:#ff8a80;--good:#7ddc9c}}
-*{box-sizing:border-box}body{margin:0;font:16px/1.5 system-ui,sans-serif;background:var(--bg);color:var(--fg)}
-a{color:var(--accent)}header{display:flex;gap:1rem;align-items:center;justify-content:space-between;padding:.75rem 1rem;border-bottom:1px solid var(--line);flex-wrap:wrap}
-header nav{display:flex;gap:1rem;align-items:center;flex-wrap:wrap}.brand{font-weight:700;text-decoration:none}
-main{max-width:56rem;margin:0 auto;padding:1rem}table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.5rem;border-bottom:1px solid var(--line);vertical-align:top}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:1rem;margin:1rem 0}.narrow{max-width:24rem;margin:3rem auto}
-label{display:block;margin:.5rem 0}input,select,button{font:inherit;padding:.4rem .6rem}input:not([type=file]):not([type=checkbox]),select{width:100%;max-width:28rem;display:block}label.check{display:flex;gap:.5rem;align-items:baseline}fieldset{border:1px solid #ddd;margin:.75rem 0}
-button{cursor:pointer}button.link{background:none;border:0;color:var(--accent);padding:0;text-decoration:underline}.inline{display:inline}
-.preview{width:100%;height:24rem;border:1px solid var(--line);border-radius:8px}.badge{font-size:.75rem;border:1px solid var(--line);border-radius:99px;padding:.1rem .5rem}
-.badge.live{color:var(--good)}.error{color:var(--bad)}.ok{color:var(--good)}small{color:var(--mut)}.history{padding-left:1.2rem}.history li{margin:.75rem 0}
-.diff{background:var(--card);padding:.5rem;overflow:auto}.add{color:var(--good)}.del{color:var(--bad)}.wide{max-width:100%}.warn{border-color:var(--bad)}
+:root{color-scheme:light dark;--bg:#f6f7f5;--fg:#17201b;--mut:#5f6b64;--line:#dfe3df;--card:#fff;--field:#fff;--accent:#1f7a4d;--accent-fg:#fff;--soft:#e6f2ea;--bad:#b3261e;--warn:#9a6700;--good:#1f7a4d;--ring:color-mix(in srgb,var(--accent) 35%,transparent);--shadow:0 1px 2px rgb(0 0 0/.04),0 1px 3px rgb(0 0 0/.06)}
+@media(prefers-color-scheme:dark){:root{--bg:#111513;--fg:#e6ebe8;--mut:#93a09a;--line:#2a312d;--card:#181d1a;--field:#0f1311;--accent:#4cc38a;--accent-fg:#06200f;--soft:#173326;--bad:#ff8a80;--warn:#e3b341;--good:#4cc38a;--shadow:none}}
+*{box-sizing:border-box}[hidden]{display:none!important}[id]{scroll-margin-top:4.5rem}
+body{margin:0;font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--fg);-webkit-font-smoothing:antialiased}
+a{color:var(--accent);text-underline-offset:2px}
+h1{font-size:1.6rem;line-height:1.2;margin:1.5rem 0 1rem;letter-spacing:-.01em}h2{font-size:1.1rem;margin:0 0 .75rem}h3{font-size:1rem;margin:1.25rem 0 .5rem}h4{margin:1rem 0 .25rem;font-family:ui-monospace,monospace;font-size:.85rem}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.85em}
+header{position:sticky;top:0;z-index:1;display:flex;gap:1rem;align-items:center;justify-content:space-between;padding:.6rem 1.25rem;background:color-mix(in srgb,var(--card) 88%,transparent);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);flex-wrap:wrap}
+.brand{font-weight:700;text-decoration:none;color:var(--fg);display:inline-flex;align-items:center;gap:.5rem;letter-spacing:-.01em}.brand::before{content:"";width:.8rem;height:.8rem;border-radius:3px;background:var(--accent)}
+header nav{display:flex;gap:.25rem;align-items:center;flex-wrap:wrap}
+header nav a,header nav button.link{color:var(--mut);text-decoration:none;padding:.35rem .65rem;border-radius:6px;font-size:.9rem}
+header nav a:hover,header nav button.link:hover{color:var(--fg);background:var(--bg)}header nav a[aria-current]{color:var(--fg);background:var(--soft);font-weight:600}
+main{max-width:60rem;margin:0 auto;padding:.5rem 1.25rem 4rem}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:1.25rem;margin:1rem 0;box-shadow:var(--shadow)}.card>:last-child{margin-bottom:0}
+.narrow{max-width:24rem;margin:12vh auto 2rem}.narrow h1{margin-top:1rem}
+.grid{display:grid;gap:0 1rem;grid-template-columns:repeat(auto-fit,minmax(min(100%,17rem),1fr))}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:.92rem}
+th,td{text-align:left;padding:.65rem .8rem;border-bottom:1px solid var(--line);vertical-align:top}tr:last-child td{border-bottom:0}
+th{font-size:.75rem;text-transform:uppercase;letter-spacing:.04em;color:var(--mut);font-weight:600;background:var(--bg)}td:has(>form){text-align:right;white-space:nowrap}
+.card table{border:0;border-radius:0;margin:0 -1.25rem;width:calc(100% + 2.5rem)}.card th{background:none}
+form{margin:0}label{display:block;margin:.85rem 0;font-size:.88rem;font-weight:500}
+input,select,textarea,button{font:inherit;color:inherit}
+input:not([type=checkbox]):not([type=file]):not([type=color]),select,textarea{display:block;width:100%;max-width:30rem;margin-top:.3rem;padding:.5rem .7rem;font-size:.95rem;font-weight:400;background:var(--field);border:1px solid var(--line);border-radius:7px;transition:border-color .15s,box-shadow .15s}
+input:hover,select:hover,textarea:hover{border-color:color-mix(in srgb,var(--mut) 50%,var(--line))}
+:focus-visible{outline:none;box-shadow:0 0 0 3px var(--ring)}input:focus,select:focus,textarea:focus{border-color:var(--accent)}
+input::placeholder,textarea::placeholder{color:var(--mut);opacity:.8}input[readonly]{background:var(--bg);font-family:ui-monospace,monospace;font-size:.85rem}
+input[type=file]{display:block;margin:.5rem 0;font-size:.9rem}input[type=file]::file-selector-button{font:inherit;margin-right:.75rem;padding:.4rem .8rem;border:1px solid var(--line);border-radius:7px;background:var(--bg);color:var(--fg);cursor:pointer}
+input[type=color]{display:block;margin-top:.3rem;width:3rem;height:2.2rem;padding:2px;border:1px solid var(--line);border-radius:7px;background:var(--field)}
+input[type=checkbox]{accent-color:var(--accent);width:1rem;height:1rem;margin:0;flex:none;transform:translateY(2px)}
+label.check{display:flex;gap:.6rem;align-items:flex-start;font-weight:400;margin:.5rem 0}
+fieldset{border:1px solid var(--line);border-radius:8px;margin:1rem 0;padding:.25rem 1rem .5rem;max-width:30rem}legend{font-size:.88rem;font-weight:600;padding:0 .35rem}
+button{cursor:pointer;display:inline-flex;align-items:center;gap:.4rem;margin-top:.5rem;padding:.5rem 1rem;font-size:.92rem;font-weight:600;border-radius:7px;border:1px solid var(--accent);background:var(--accent);color:var(--accent-fg);transition:filter .15s}
+button:hover{filter:brightness(1.08)}button:active{filter:brightness(.95)}
+button.link{background:none;border:0;color:var(--accent);padding:0;margin:0;font-weight:500;text-decoration:underline;text-underline-offset:2px}
+td button.link,.history button.link{font-size:.88rem}
+button.link[data-danger]{color:var(--bad)}
+.inline{display:inline}.inline+.inline{margin-left:.5rem}
+.preview{display:block;width:100%;height:28rem;border:1px solid var(--line);border-radius:10px;background:#fff;box-shadow:var(--shadow)}
+.badge{display:inline-block;font-size:.72rem;font-weight:600;line-height:1.5;border-radius:99px;padding:.05rem .55rem;background:var(--bg);border:1px solid var(--line);color:var(--mut);vertical-align:1px;white-space:nowrap}
+.badge.live,.badge.public{background:var(--soft);border-color:transparent;color:var(--good)}.badge.link{background:color-mix(in srgb,var(--warn) 14%,transparent);border-color:transparent;color:var(--warn)}
+p.error,p.ok,p.warn{padding:.65rem .9rem;border-radius:8px;border:1px solid}
+.error{color:var(--bad)}p.error{background:color-mix(in srgb,var(--bad) 8%,transparent);border-color:color-mix(in srgb,var(--bad) 30%,transparent)}
+.ok{color:var(--good)}p.ok{background:var(--soft);border-color:color-mix(in srgb,var(--good) 30%,transparent)}
+p.warn{color:var(--warn);background:color-mix(in srgb,var(--warn) 10%,transparent);border-color:color-mix(in srgb,var(--warn) 30%,transparent)}
+.card.ok{border-color:color-mix(in srgb,var(--good) 40%,var(--line));color:inherit}.card.warn{border-color:color-mix(in srgb,var(--warn) 50%,var(--line))}.card.warn h2{color:var(--warn)}
+small,.mut{color:var(--mut);font-size:.82rem}td small{display:inline-block;margin-top:.1rem}
+.status{margin-left:.75rem;font-size:.88rem;color:var(--mut)}
+.history{list-style:none;padding:0;margin:0}.history li{padding:.75rem 0;border-top:1px solid var(--line)}.history li:first-child{border-top:0;padding-top:0}
+.diff{background:var(--field);border:1px solid var(--line);border-radius:8px;padding:.75rem;overflow:auto;line-height:1.45}.add{color:var(--good)}.del{color:var(--bad)}
+.wide{max-width:100%!important}.stats{display:flex;gap:2rem;flex-wrap:wrap;list-style:none;padding:0;margin:0 0 .5rem}.stats strong{display:block;font-size:1.4rem;line-height:1.2}
+@media(max-width:40rem){header{position:static}main{padding:.25rem 1rem 3rem}header{padding:.5rem 1rem}h1{font-size:1.35rem}.card{padding:1rem}.card table{margin:0 -1rem;width:calc(100% + 2rem)}
+table{display:block;overflow-x:auto;white-space:nowrap}td small{white-space:normal}}
 `;
