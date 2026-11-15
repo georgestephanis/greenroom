@@ -1,5 +1,5 @@
 // Accounts, sessions, and the credential layer: every auth method resolves to ONE credential object
-// before any route runs; enforcement reads only that object (issue #214 section 6).
+// before any route runs; enforcement reads only that object.
 import crypto from 'node:crypto';
 import { promisify } from 'node:util';
 import { newId, now, randomToken, sha256hex, hmac, safeEqual, normEmail } from './util.js';

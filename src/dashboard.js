@@ -152,7 +152,7 @@ ${ppl.smtp ? `<form method="post" action="/api/admin/smtp/test" class="inline">$
 <form method="post" action="/api/admin/branding">${hidden(cred)}<label>Agency name <input name="name" value="${esc(brand.name)}" maxlength="100"></label>
 <label>Logo URL <input type="url" name="logo" value="${esc(brand.logo)}" placeholder="https://…"></label>
 <label>Accent colour <input type="color" name="accent" value="${esc(brand.accent || '#1a73e8')}"></label><button>Save branding</button></form></section>
-<section class="card"><h2>Move to Spacefast</h2><p>Done self-hosting? Copy your spaces, with their history if you like, to Spacefast or a homefast instance. Nothing here changes.</p><p><a href="/instance/migrate">Move spaces…</a></p></section>
+<section class="card"><h2>Move to Spacefast</h2><p>Done self-hosting? Copy your spaces, with their history if you like, to Spacefast. Nothing here changes.</p><p><a href="/instance/migrate">Move spaces…</a></p></section>
 <section class="card"><h2>Plugins</h2><p>Installed plugins are off until you turn them on here; each space then opts in on its own page.</p><ul>${plugins.map((p) => `<li><strong>${esc(p.name)}</strong> ${esc(p.version)} \u2014 ${esc(p.description)}
 <form method="post" action="/api/admin/plugins/${esc(p.name)}" class="inline">${hidden(cred)}<input type="hidden" name="_next" value="/instance"><input type="hidden" name="enabled" value="${p.on ? '0' : '1'}"><button class="link">${p.on ? 'Turn off' : 'Turn on'}</button></form></li>`).join('')}</ul></section>`);
 }

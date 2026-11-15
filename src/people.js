@@ -1,4 +1,4 @@
-// People (issue #214 section 6, M6): SMTP settings, domain self-signup and email re-confirmation.
+// People (M6): SMTP settings, domain self-signup and email re-confirmation.
 // Offboarding needs nothing here: Auth.activeUser is the live constraint every credential resolves through.
 import crypto from 'node:crypto';
 import { httpErr } from './auth.js';

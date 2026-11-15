@@ -1,4 +1,4 @@
-// Minimal SMTP client (issue #214 section 6): implicit TLS or STARTTLS, AUTH PLAIN, plain-text mail.
+// Minimal SMTP client: implicit TLS or STARTTLS, AUTH PLAIN, plain-text mail.
 // No dependencies. Every step has an idle timeout; a header value with CR or LF is refused outright.
 import net from 'node:net';
 import tls from 'node:tls';

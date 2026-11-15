@@ -101,7 +101,7 @@ Share links, passwords and tokens are never exported. Format, limits and what is
 
 ## Moving to Spacefast
 
-Done self-hosting? **Instance → Move to Spacefast** copies spaces to Spacefast, or to a homefast instance, over its public
+Done self-hosting? **Instance → Move to Spacefast** copies spaces to Spacefast over its public
 API. Mint an API key on the target that can create spaces and publish, paste it with the API address, pick spaces, and
 choose live versions only or full history (replayed oldest first; only the version live here goes live there). The key is
 used for that run only and never saved. Team and link-only spaces arrive private, public ones public. A slug already taken

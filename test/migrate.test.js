@@ -25,7 +25,7 @@ async function fakeSpacefast(t, { privateOnly = false, taken = [] } = {}) {
   const s = https.createServer({ key: fx('cimd-test.key'), cert: fx('cimd-test.crt') }, async (q, r) => {
     const chunks = []; for await (const c of q) chunks.push(c);
     const raw = Buffer.concat(chunks), isJson = q.headers['content-type'] === 'application/json';
-    if (isJson && !raw.length) return r.writeHead(400).end('{"detail":"empty JSON body"}'); // like homefast's Fastify
+    if (isJson && !raw.length) return r.writeHead(400).end('{"detail":"empty JSON body"}'); // like the real API
     const body = isJson ? JSON.parse(raw) : {};
     log.auth.add(q.headers.authorization);
     const send = (code, data) => { r.writeHead(code, { 'content-type': 'application/json' }); r.end(JSON.stringify(data)); };

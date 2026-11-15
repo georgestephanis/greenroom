@@ -1,4 +1,4 @@
-// M6: people. SMTP client, self-signup, offboarding, email re-confirmation (issue #214 section 6).
+// M6: people. SMTP client, self-signup, offboarding, email re-confirmation.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import net from 'node:net';

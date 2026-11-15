@@ -1,4 +1,4 @@
-// Path-mode security (issue #214 section 4). Everything here is pure and unit-tested; the server
+// Path-mode security. Everything here is pure and unit-tested; the server
 // calls into it so no response under /s/ can bypass it.
 import { hmac, safeEqual } from './util.js';
 import { FORBIDDEN_HEADER_NAMES } from './routing.js';

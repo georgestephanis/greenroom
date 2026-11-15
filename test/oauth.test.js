@@ -1,4 +1,4 @@
-// M2: OAuth 2.1 + MCP. One test per security property in issue #214 section 6.
+// M2: OAuth 2.1 + MCP. One test per security property.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';

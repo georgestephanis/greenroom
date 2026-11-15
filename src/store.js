@@ -1,5 +1,5 @@
 // Spaces, versions, manifests. A version row is a "commit", a manifest is a "tree", a CAS blob is a
-// "file" (issue #214 section 5). Versions are immutable; "live" is a pointer.
+// "file". Versions are immutable; "live" is a pointer.
 import { tx } from './db.js';
 import { httpErr, authorName, authorId, hashPassword } from './auth.js';
 import { newId, now, randomToken, sha256hex, SLUG_RE, slugify, cleanPath, contentType } from './util.js';
@@ -106,7 +106,7 @@ export class Store {
     return this.spaceById(space.id);
   }
 
-  // ---- share links (grants; a link with a password is a 'password' grant, section 8 rule 5) ----
+  // ---- share links (grants; a link with a password is a 'password' grant) ----
   links(space) {
     return this.db.prepare(`SELECT * FROM grants WHERE space_id = ? AND kind IN ${LINK_KINDS} ORDER BY created_at DESC`).all(space.id);
   }

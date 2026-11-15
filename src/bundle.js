@@ -1,4 +1,4 @@
-// Portable export/import bundles (issue #214 section 8; format written up in docs/bundle-spec.md).
+// Portable export/import bundles (format written up in docs/bundle-spec.md).
 // Everything streams: exports go entry by entry from CAS into a zip on disk, imports go from a zip on
 // disk entry by entry into CAS. Only the small JSON documents (space.json, versions.json, activity.json)
 // are held in memory, and each is capped at maxJsonBytes.

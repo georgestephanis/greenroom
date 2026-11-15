@@ -1,4 +1,4 @@
-// MCP over Streamable HTTP (JSON responses, no SSE), issue #214 section 7.
+// MCP over Streamable HTTP (JSON responses, no SSE).
 // Every tool checks the credential's scope; a missing scope is HTTP 403 insufficient_scope naming
 // what to ask for, so the client can step up through /oauth/authorize.
 import { httpErr, can } from './auth.js';

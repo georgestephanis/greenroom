@@ -1,4 +1,4 @@
-// OAuth 2.1 authorization server for MCP clients (issue #214 section 6).
+// OAuth 2.1 authorization server for MCP clients.
 // Public clients only: auth code + PKCE (S256), client_id is a Client ID Metadata Document URL
 // (dynamic registration is off unless an admin turns it on). The approved grant IS an api_keys row
 // (kind 'oauth'), so it sits in the same list and revokes the same way as a pasted token.

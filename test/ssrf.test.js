@@ -1,4 +1,4 @@
-// The CIMD fetcher against a real local HTTPS server (issue #214 section 6: SSRF guard).
+// The CIMD fetcher against a real local HTTPS server (SSRF guard).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

@@ -1,4 +1,4 @@
-// M5: plugin loader, per-space enablement, the sqlite plugin and the watermark plugin (issue #214 section 11).
+// M5: plugin loader, per-space enablement, the sqlite plugin and the watermark plugin.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';

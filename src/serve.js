@@ -55,7 +55,7 @@ export function createSpaceHandler({ store, auth, config, clientIp, throttle, pl
   const viewerFor = (space, cookies) => verifyViewer(config.secret, space, cookies[viewerCookieName(space)]);
 
   // A visit with ?key=: check the link, maybe the password, spend one use, set the space+link-bound
-  // cookie, then redirect to the URL without the key (section 6).
+  // cookie, then redirect to the URL without the key.
   async function linkEntry(req, res, url, space, cookies, brand) {
     const clean = withoutKey(url);
     const gone = () => send(res, 410, page(brand, 'This link is no longer active', 'It may have expired or been switched off. Ask whoever sent it for a new one.'), HTML);

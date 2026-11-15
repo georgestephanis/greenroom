@@ -1,7 +1,7 @@
 # greenroom bundle format, version 1
 
 A bundle is a plain zip. It is the contract between greenroom instances today and between greenroom
-and homefast later, so it stays small, versioned and boring. The committed fixtures in
+and Spacefast later, so it stays small, versioned and boring. The committed fixtures in
 `test/fixtures/bundles/` (regenerate with `node scripts/make-fixtures.js`) are the reference examples.
 
 ## Two kinds
@@ -43,7 +43,7 @@ activity.json           the space's audit trail
 ```
 
 `live_version` is present in both kinds; its `files` list carries each live file's content type (a current bundle has no other manifest, so the importer keeps these when they look like a MIME type). A reader must refuse any `format` it does not know.
-Timestamps are ISO-8601 UTC. IDs use homefast's prefixes (`spc_`, `ver_`, `usr_`, `key_`).
+Timestamps are ISO-8601 UTC. IDs use Spacefast's prefixes (`spc_`, `ver_`, `usr_`, `key_`).
 
 ## `history/versions.json`
 
@@ -110,11 +110,11 @@ people only; agent credentials cannot import or replace.
 On import, settings are validated against the plugin's spec. An installed plugin's own exporter and importer
 handle its files even while it is switched off. A plugin that is not installed on the importing instance has its
 files kept untouched (and re-exported later), with a warning. Plugin files count against the space size limit. Files for plugins the
-space does not list are skipped. The mapping into homefast: `sqlite` maps directly (`plugins/sqlite/app.sqlite`
+space does not list are skipped. The mapping into Spacefast: `sqlite` maps directly (`plugins/sqlite/app.sqlite`
 becomes `db/app.sqlite`); `watermark`'s banner setting is dropped with a warning; `functions` needs a
 configuration translation and `php` has no equivalent (static import with a warning).
 
-## For the homefast importer
+## For the Spacefast importer
 
 Same IDs, same column names and types for `spaces`, `versions`, `manifest_files` and `activity_log`, UTC ISO
 timestamps, and `privacy` mapping 1:1 to grants (`team` to team, `link` to share link, `public` to public).

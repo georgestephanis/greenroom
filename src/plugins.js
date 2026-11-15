@@ -1,4 +1,4 @@
-// Plugin loader (issue #214 section 3). A plugin is a plain object with register(ctx); ctx is the whole
+// Plugin loader. A plugin is a plain object with register(ctx); ctx is the whole
 // API. It deliberately has no database handle to core tables, no way to mint or check credentials, and
 // no way to touch CSP or reserved cookies: core resolves the viewer or token, then calls the handler,
 // then filters whatever comes back. register() runs once at startup and must stay cheap; do heavy
@@ -172,7 +172,7 @@ export function createPlugins({ store, config, installed = [] }) {
       return out;
     },
 
-    // ---- bundles (section 8) ----
+    // ---- bundles ----
     /** Add every plugin's files for a space. `add(zipPath, content)`; `history` also asks for history data. */
     // An installed plugin's own exporter and importer run even while it is switched off, so its data keeps
     // its layout (snapshot blobs live in the CAS, not in its directory). Only unknown plugins are copied raw.

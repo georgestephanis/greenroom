@@ -1,4 +1,4 @@
-// Outbound fetch for client metadata documents (CIMD), ported from homefast core/src/engine/ssrf.ts.
+// Outbound fetch for client metadata documents (CIMD).
 // Every resolved address is checked inside the socket's own lookup, so a DNS answer that flips to a
 // private address between check and connect is never reached (no rebinding window).
 import dns from 'node:dns';

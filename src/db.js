@@ -1,6 +1,6 @@
 // Control database. Shared tables (spaces, versions, manifest_files, users, sessions, activity_log,
-// grants, api_keys) keep homefast's column names and types; greenroom-only data lives in NEW
-// columns/tables so a later homefast import is an ordinary migration (issue #214 section 8).
+// grants, api_keys) keep Spacefast's column names and types; greenroom-only data lives in NEW
+// columns/tables so a later Spacefast import is an ordinary migration.
 import { DatabaseSync } from 'node:sqlite';
 import { sha256hex } from './util.js';
 
@@ -32,7 +32,7 @@ export const MIGRATIONS = [
     total_bytes INTEGER DEFAULT 0,
     created_at TEXT NOT NULL,
     finalized_at TEXT,
-    -- greenroom-only (history, section 5):
+    -- greenroom-only (history):
     parent_version_id TEXT,
     author_credential_id TEXT,
     author_name TEXT,
@@ -93,7 +93,7 @@ export const MIGRATIONS = [
   );
   CREATE INDEX idx_activity_log_space_created ON activity_log(space_id, created_at);
 
-  -- Agent tokens / OAuth grants (M2). homefast api_keys columns, plus greenroom-only scope columns.
+  -- Agent tokens / OAuth grants (M2). Spacefast api_keys columns, plus greenroom-only scope columns.
   CREATE TABLE api_keys (
     id TEXT PRIMARY KEY,
     name TEXT NOT NULL,
@@ -111,7 +111,7 @@ export const MIGRATIONS = [
   );
   CREATE INDEX idx_api_keys_prefix ON api_keys(token_prefix);
 
-  -- Share links / passwords (M3). Same shape as homefast grants.
+  -- Share links / passwords (M3). Same shape as Spacefast grants.
   CREATE TABLE grants (
     id TEXT PRIMARY KEY,
     space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
@@ -186,14 +186,14 @@ export const MIGRATIONS = [
     created_at TEXT NOT NULL
   );
   `,
-  // M3: share links. The key lookup is one indexed read per request (section 6); last_viewed_at is
+  // M3: share links. The key lookup is one indexed read per request; last_viewed_at is
   // greenroom-only view tracking next to first_viewed_at and view_count.
   `
   ALTER TABLE grants ADD COLUMN last_viewed_at TEXT;
   CREATE INDEX idx_grants_token ON grants(raw_token);
   `,
   // Share keys are stored as sha256 (like api_keys and oauth_tokens), so the URL is shown once at
-  // creation. raw_token stays in the schema for homefast compatibility but is left NULL.
+  // creation. raw_token stays in the schema for Spacefast compatibility but is left NULL.
   (db) => {
     db.exec('ALTER TABLE grants ADD COLUMN token_hash TEXT; CREATE UNIQUE INDEX idx_grants_token_hash ON grants(token_hash);');
     const set = db.prepare('UPDATE grants SET token_hash = ?, raw_token = NULL WHERE id = ?');

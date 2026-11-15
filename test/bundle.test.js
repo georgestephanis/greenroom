@@ -1,4 +1,4 @@
-// M4: portable export/import, history.fi, hostile bundles (issue #214 section 8).
+// M4: portable export/import, history.fi, hostile bundles.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';

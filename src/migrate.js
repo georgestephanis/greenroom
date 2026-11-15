@@ -1,5 +1,5 @@
-// One-way move of spaces to Spacefast, or to a homefast instance, over its public API (issue #214, amendment:
-// leaving is a supported path). Nothing here is changed or deleted. The API token lives only in this job's
+// One-way move of spaces to Spacefast over its public API (leaving is a supported path).
+// Nothing here is changed or deleted. The API token lives only in this job's
 // closure: never stored, logged or shown again.
 import { request } from './ssrf.js';
 import { now } from './util.js';
@@ -62,7 +62,7 @@ export function startMigration({ store, cas, tls = {} }, { url, token, slugs, hi
       made = await api('POST', 'v1/spaces', { slug: space.slug, title: space.name, access: access = 'private' });
       row.note = 'Made private: the target team only allows private spaces. ';
     }
-    // homefast answers 200 with the existing space for a taken slug; never publish over someone's site.
+    // The API answers 200 with the existing space for a taken slug; never publish over someone's site.
     if (made.status === 200) { row.status = 'skipped'; row.note += 'A space with this slug already exists on the target'; return; }
     const id = made.data?.space?.id ?? made.data?.id;
     if (!id) throw new Error('Target did not return a space id');
@@ -88,7 +88,7 @@ export function startMigration({ store, cas, tls = {} }, { url, token, slugs, hi
       row.versions++;
     }
     row.status = 'done';
-    row.url = made.data?.space?.url || made.data?.space?.liveUrl || made.data?.url || ''; // homefast says liveUrl
+    row.url = made.data?.space?.url || made.data?.space?.liveUrl || made.data?.url || ''; // some responses say liveUrl
   }
 
   job.promise = (async () => {

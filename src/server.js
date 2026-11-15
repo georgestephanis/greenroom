@@ -274,7 +274,7 @@ export function createApp(overrides = {}) {
     if (a === 'admin' && b === 'smtp' && c === 'test' && m === 'POST') { requireAdmin(cred); await people.test(cred); return { status: 200, body: { ok: true }, next: '/instance?mailed=1#people' }; }
     if (a === 'admin' && b === 'signup' && m === 'POST') { requireAdmin(cred); people.setSignup(cred, body); return { status: 200, body: people.view(), next: '/instance#people' }; }
     if (a === 'admin' && b === 'reconfirm' && m === 'POST') { requireAdmin(cred); people.setReconfirm(cred, body); return { status: 200, body: people.view(), next: '/instance#people' }; }
-    // Move to Spacefast (or homefast): the token comes in on this request and stays in the job's closure.
+    // Move to Spacefast: the token comes in on this request and stays in the job's closure.
     if (a === 'admin' && b === 'migrate' && m === 'GET') { requireAdmin(cred); return { status: 200, body: { migration: jobView(migration) } }; }
     if (a === 'admin' && b === 'migrate' && m === 'POST') {
       requireAdmin(cred);
@@ -320,7 +320,7 @@ export function createApp(overrides = {}) {
             const patch = {};
             for (const k of ['name', 'slug', 'noindex']) if (body[k] !== undefined) patch[k] = body[k];
             if (body.privacy !== undefined) {
-              if (body.privacy === 'public') requireSession(cred); // making Public is a person's decision (section 6)
+              if (body.privacy === 'public') requireSession(cred); // making Public is a person's decision
               else if (!can(cred, 'share', space.slug)) throw httpErr(403, 'Your credential cannot change sharing here');
               patch.privacy = body.privacy;
             }

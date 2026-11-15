@@ -1,4 +1,4 @@
-// M3: share links, passwords, expiry, view tracking, branding (issue #214 section 6).
+// M3: share links, passwords, expiry, view tracking, branding.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { boot, client, setupAdmin } from './helpers.js';

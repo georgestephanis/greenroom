@@ -3,7 +3,7 @@ import { domainToASCII } from 'node:url';
 
 export const now = () => new Date().toISOString();
 const ALPHABET = 'abcdefghijklmnopqrstuvwxyz0123456789';
-// homefast prefixed ids: spc_, ver_, usr_, ses_, grt_ ... (nanoid-style, 20 chars)
+// Spacefast prefixed ids: spc_, ver_, usr_, ses_, grt_ ... (nanoid-style, 20 chars)
 export function newId(prefix, len = 20) {
   const b = crypto.randomBytes(len);
   let s = '';
@@ -45,7 +45,7 @@ export function cleanPath(p) {
 }
 export const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
-// Strict address handling for signup and mail (section 6): one @, a dot-atom local part (no quoted
+// Strict address handling for signup and mail: one @, a dot-atom local part (no quoted
 // forms), and a domain lowercased to its ASCII (punycode) form. One trailing dot is dropped.
 export function normDomain(d) {
   let s = String(d ?? '').trim();

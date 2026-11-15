@@ -1,4 +1,4 @@
-// Content-addressed blobs. Same on-disk layout as homefast: {blobsDir}/{ab}/{sha256}.
+// Content-addressed blobs. Same on-disk layout as Spacefast: {blobsDir}/{ab}/{sha256}.
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
