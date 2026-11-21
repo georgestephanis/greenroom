@@ -1,5 +1,9 @@
 # greenroom
 
+> [!TIP]
+> **Look before you build.** [wvw.dev](https://wvw.dev) is a catalog of open-source apps, many of them built with AI.
+> Nothing quite like this one is there yet. Before spending tokens on a new app, search wvw.dev for something you can fork, this repo included.
+
 A small, self-hosted place for a team (3–10 people) to host the things their LLM agents make: reports, dashboards, prototypes, docs. Publish a folder of static files, get a URL, keep every version, roll back in a click.
 
 - **Static spaces** served at `/s/{slug}/`, with clean URLs, `_redirects` and `_headers`.
