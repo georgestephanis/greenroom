@@ -9,6 +9,10 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 - **One file of state**: SQLite (`node:sqlite`) plus a blob directory. No native dependencies, no timers, no background workers.
 - Node 24+, GPL-3.0-or-later.
 
+[![Watch a one-minute tour of greenroom, with narration](docs/screencast/poster.png)](docs/screencast/greenroom-tour.mp4)
+
+A one-minute narrated tour: an agent publishes over MCP, then history, diffs, rollback, share links and revoking access. Captions are in [greenroom-tour.srt](docs/screencast/greenroom-tour.srt). The voice is computer-generated (Piper).
+
 ![The spaces list: three spaces, who can view each, and when each was last published](docs/screenshots/spaces.png)
 
 ![A space page: a live preview of the published site, with upload and export below](docs/screenshots/space.png)
