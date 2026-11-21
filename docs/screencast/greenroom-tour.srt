@@ -1,0 +1,31 @@
+1
+00:00:03,203 --> 00:00:10,935
+greenroom is a small, self-hosted home for everything your team's AI agents make: reports, dashboards and prototypes.
+
+2
+00:00:11,636 --> 00:00:19,101
+An agent connects over MCP, with access a teammate approved, and publishes a new version, which is live straight away.
+
+3
+00:00:19,801 --> 00:00:26,059
+Every publish is kept, and the history shows who did what. Here, it's Claude, on Ada's behalf.
+
+4
+00:00:26,759 --> 00:00:29,778
+Compare any two versions to see exactly what changed.
+
+5
+00:00:30,478 --> 00:00:35,610
+Roll back in one click. The rollback is a new version, so nothing is lost.
+
+6
+00:00:38,218 --> 00:00:44,917
+To show a client, create a share link that can expire, need a password, or only work a few times.
+
+7
+00:00:45,984 --> 00:00:48,585
+And you can revoke an agent's access at any time.
+
+8
+00:00:49,285 --> 00:00:55,136
+One Node process and one SQLite file. greenroom is free and open source.
