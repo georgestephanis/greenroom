@@ -1,5 +1,14 @@
 # greenroom
 
+> [!TIP]
+> **Look before you build.** Similar open-source projects:
+>
+> - [agent-pages](https://github.com/SebastianMihali/agent-pages): self-hosted static hosting that agents publish to over MCP or REST, MIT
+> - [artifact-host](https://github.com/noomz/artifact-host): self-hosted host for agent-made HTML, MIT
+> - [Coolify](https://github.com/coollabsio/coolify): a full self-hosted PaaS, Apache-2.0
+>
+> Before building your own tool, search [AlternativeTo](https://alternativeto.net) (filter to open source), [GitHub](https://github.com/search?type=repositories) and [wvw.dev](https://wvw.dev) for something to fork, this repo included.
+
 A small, self-hosted place for a team (3–10 people) to host the things their LLM agents make: reports, dashboards, prototypes, docs. Publish a folder of static files, get a URL, keep every version, roll back in a click.
 
 - **Static spaces** served at `/s/{slug}/`, with clean URLs, `_redirects` and `_headers`.
