@@ -64,7 +64,7 @@ ${links ? sharing(cred, space, links) : ''}
 ${pluginsCard(cred, space, plugins)}
 <section class="card"><h2>History</h2><ol class="history">${hist || '<li>No versions.</li>'}</ol></section>
 <section class="card" id="settings"><h2>Settings</h2><form method="post" action="/api/spaces/${esc(space.slug)}">${hidden(cred)}<input type="hidden" name="_method" value="PATCH">
-<label>Name <input name="name" value="${esc(space.name)}" required maxlength="200"></label><label>Slug <input name="slug" value="${esc(space.slug)}" required pattern="[a-z0-9]([a-z0-9-]{0,60}[a-z0-9])?" title="Lowercase letters, digits and dashes"></label>
+<label>Name <input name="name" value="${esc(space.name)}" required maxlength="200"></label><label>Slug <input name="slug" value="${esc(space.slug)}" required pattern="[a-z0-9]([a-z0-9\\-]{0,60}[a-z0-9])?" title="Lowercase letters, digits and dashes"></label>
 <button>Save</button></form><small>Changing the slug changes the space's URL. Old links to <code>/s/${esc(space.slug)}/</code> stop working.</small>
 <form method="post" action="/api/spaces/${esc(space.slug)}" data-confirm="Delete “${esc(space.name)}” and all its versions? This cannot be undone.">${hidden(cred)}<input type="hidden" name="_method" value="DELETE"><h3>Delete this space</h3>
 <p><small>Removes every version and share link. Export it first if you might want it back.</small></p><button data-danger>Delete space</button></form></section>`);
