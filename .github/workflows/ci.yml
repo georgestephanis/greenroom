@@ -13,3 +13,4 @@ jobs:
           node-version: 24
       - run: npm run check
       - run: npm test
+      - run: node scripts/tour/build.js _tour
