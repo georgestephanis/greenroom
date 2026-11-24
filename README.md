@@ -9,6 +9,8 @@
 >
 > Before building your own tool, search [AlternativeTo](https://alternativeto.net) (filter to open source), [GitHub](https://github.com/search?type=repositories) and [wvw.dev](https://wvw.dev) for something to fork, this repo included.
 
+**[Take the read-only tour →](https://georgestephanis.github.io/greenroom/)** Click through the real dashboard pages with sample data. Nothing you do there is saved.
+
 A small, self-hosted place for a team (3–10 people) to host the things their LLM agents make: reports, dashboards, prototypes, docs. Publish a folder of static files, get a URL, keep every version, roll back in a click.
 
 - **Static spaces** served at `/s/{slug}/`, with clean URLs, `_redirects` and `_headers`.
@@ -21,6 +23,8 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 [![Watch a one-minute tour of greenroom, with narration](docs/screencast/poster.png)](docs/screencast/greenroom-tour.mp4)
 
 A one-minute narrated tour: an agent publishes over MCP, then history, diffs, rollback, share links and revoking access. Captions are in [greenroom-tour.srt](docs/screencast/greenroom-tour.srt). The voice is computer-generated (Piper).
+
+The [read-only tour](https://georgestephanis.github.io/greenroom/) is built by `node scripts/tour/build.js`, which runs greenroom with sample data and saves each page as static HTML. A GitHub Actions workflow rebuilds it on every push to `main`. See [docs/read-only-tour.md](docs/read-only-tour.md).
 
 ![The spaces list: three spaces, who can view each, and when each was last published](docs/screenshots/spaces.png)
 
@@ -126,6 +130,7 @@ dates are not carried over; the report at the end lists what moved.
 ```bash
 npm test           # node:test, no dependencies to install
 npm run check      # fails if anything imports outside this directory
+node scripts/tour/build.js   # builds the read-only tour into _tour/
 ```
 
 See `CONTRIBUTING.md`.
