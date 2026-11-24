@@ -347,7 +347,7 @@ export function createApp(overrides = {}) {
         if (c === 'diff' && m === 'GET') return { status: 200, body: store.diff(space, url.searchParams.get('from'), url.searchParams.get('to')) };
         if (c === 'rollback' && m === 'POST') {
           const v = await store.rollback(cred, space, body.version);
-          return { status: 200, body: { version: pubVersion(v) } };
+          return { status: 200, body: { version: pubVersion(v) }, next: `/spaces/${space.slug}` };
         }
       }
     }
