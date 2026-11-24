@@ -91,3 +91,15 @@ test('Restore from the history form goes back to the space page', async (t) => {
   assert.equal(r.headers.get('location'), '/spaces/site');
   assert.match(await (await admin.fetch('/spaces/site')).text(), /Rollback to v1/);
 });
+
+test('the slug field pattern is valid in browsers (v flag) and agrees with the server', async (t) => {
+  const app = await boot();
+  t.after(app.close);
+  const admin = await setupAdmin(app);
+  await admin.post('/api/spaces', { name: 'Site', slug: 'site' });
+  const html = await (await admin.fetch('/spaces/site')).text();
+  const pattern = /<input name="slug"[^>]* pattern="([^"]+)"/.exec(html)[1].replace(/&#\d+;/g, (e) => String.fromCharCode(e.slice(2, -1)));
+  const browser = new RegExp(`^(?:${pattern})$`, 'v'); // how browsers compile the pattern attribute
+  const { SLUG_RE } = await import('../src/util.js');
+  for (const s of ['a', 'site', 'q3-board-report', 'a'.repeat(62), 'a'.repeat(63), 'Bad', '-x', 'x-', 'a_b', '']) assert.equal(browser.test(s), SLUG_RE.test(s), s);
+});
