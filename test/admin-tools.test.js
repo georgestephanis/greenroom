@@ -79,3 +79,15 @@ test('a space can be renamed, moved to a new slug from the form, and deleted', a
   assert.equal((await form('/api/spaces/final', { _method: 'DELETE' })).headers.get('location'), '/');
   assert.equal((await admin.fetch('/spaces/final')).status, 404);
 });
+
+test('Restore from the history form goes back to the space page', async (t) => {
+  const app = await boot();
+  t.after(app.close);
+  const admin = await setupAdmin(app);
+  await admin.post('/api/spaces', { name: 'Site', slug: 'site' });
+  const f = (s) => [{ path: 'index.html', content: s }];
+  for (const s of ['one', 'two']) assert.equal((await admin.post('/api/spaces/site/versions', { files: f(s) })).status, 201);
+  const r = await admin.fetch('/api/spaces/site/rollback', { method: 'POST', body: new URLSearchParams({ _csrf: admin.csrf, version: '1', _next: '/spaces/site' }).toString(), headers: { 'content-type': 'application/x-www-form-urlencoded', referer: `${app.base}/spaces/site` } });
+  assert.equal(r.headers.get('location'), '/spaces/site');
+  assert.match(await (await admin.fetch('/spaces/site')).text(), /Rollback to v1/);
+});
