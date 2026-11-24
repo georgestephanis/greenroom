@@ -24,7 +24,7 @@ A small, self-hosted place for a team (3–10 people) to host the things their L
 
 A one-minute narrated tour: an agent publishes over MCP, then history, diffs, rollback, share links and revoking access. Captions are in [greenroom-tour.srt](docs/screencast/greenroom-tour.srt). The voice is computer-generated (Piper).
 
-The tour is built by `node scripts/tour/build.js`, which runs greenroom with sample data and saves each page as static HTML. A GitHub Actions workflow rebuilds it on every push to `main`.
+The [read-only tour](https://georgestephanis.github.io/greenroom/) is built by `node scripts/tour/build.js`, which runs greenroom with sample data and saves each page as static HTML. A GitHub Actions workflow rebuilds it on every push to `main`. See [docs/read-only-tour.md](docs/read-only-tour.md).
 
 ![The spaces list: three spaces, who can view each, and when each was last published](docs/screenshots/spaces.png)
 
@@ -130,6 +130,7 @@ dates are not carried over; the report at the end lists what moved.
 ```bash
 npm test           # node:test, no dependencies to install
 npm run check      # fails if anything imports outside this directory
+node scripts/tour/build.js   # builds the read-only tour into _tour/
 ```
 
 See `CONTRIBUTING.md`.
